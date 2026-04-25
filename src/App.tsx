@@ -55,6 +55,8 @@ type ImageExportOptions = {
 const SUPPORTED_FORMATS = ['OBJ', 'FBX', '3DS', 'STL', 'BLEND', 'SKP']
 const FILE_INPUT_ACCEPT = '.obj,.fbx,.3ds,.stl,.blend,.skp'
 const IMAGE_INPUT_ACCEPT = '.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff'
+const SAMPLE_MODEL_ASSET_URL = `${import.meta.env.BASE_URL}sample-model.fbx`
+const SAMPLE_MODEL_FILE_NAME = 'sample model'
 
 const SLIDER_DEFS: Array<{
   key: 'reflection' | 'refraction' | 'bump' | 'coating'
@@ -554,6 +556,7 @@ function App() {
   const [bakeExportOptions, setBakeExportOptions] = useState<BakeExportOptions>(
     DEFAULT_BAKE_EXPORT_OPTIONS,
   )
+  const [liveViewerAspect, setLiveViewerAspect] = useState(16 / 9)
   const [wireColor, setWireColor] = useState('#111111')
   const [wireframeEnabled, setWireframeEnabled] = useState(false)
   const [wireframeShowModel, setWireframeShowModel] = useState(true)
@@ -570,10 +573,6 @@ function App() {
   const presetDefaults = createPresetSurface(surface.preset)
   const lightDefaults = LIGHT_PRESETS[light.type]
   const activeFrame = FRAME_OPTIONS.find((item) => item.key === previewFramePreset) ?? null
-  const liveViewerAspect =
-    viewerHostRef.current && viewerHostRef.current.clientHeight > 0
-      ? viewerHostRef.current.clientWidth / viewerHostRef.current.clientHeight
-      : 16 / 9
   const previewAspect = activeFrame?.aspect ?? liveViewerAspect
   const scaleMultiplier = imageExportOptions.scale ?? 1
   const dpiDensityScale = imageExportOptions.dpi / 72
@@ -626,6 +625,10 @@ function App() {
       }
       setIsViewerBusy(false)
     }
+  }
+
+  const updateStatus = (nextStatus: string) => {
+    startTransition(() => setStatus(nextStatus))
   }
 
   const runAsyncViewerTask = async <T,>(
@@ -692,10 +695,6 @@ function App() {
   }, [])
 
   useEffect(() => {
-    setMotionBlur(DEFAULT_MOTION_SETTINGS)
-  }, [])
-
-  useEffect(() => {
     surfaceRef.current = surface
     if (materialMode === 'custom') {
       viewportRef.current?.applySurface(surface)
@@ -706,6 +705,25 @@ function App() {
       requestAnimationFrame(() => finishViewerBusy())
     }
   }, [materialMode, surface])
+
+  useEffect(() => {
+    const host = viewerHostRef.current
+    if (!host) {
+      return
+    }
+
+    const updateAspect = () => {
+      if (host.clientWidth > 0 && host.clientHeight > 0) {
+        setLiveViewerAspect(host.clientWidth / host.clientHeight)
+      }
+    }
+
+    updateAspect()
+    const observer = new ResizeObserver(updateAspect)
+    observer.observe(host)
+
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     viewportRef.current?.updateLightSettings(light)
@@ -786,10 +804,6 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const updateStatus = (nextStatus: string) => {
-    startTransition(() => setStatus(nextStatus))
-  }
-
   const loadSource = async (source: ViewerFileSource) => {
     updateStatus(`loading / ${source.name}`)
 
@@ -814,12 +828,47 @@ function App() {
         }),
       )
       updateStatus(`loaded / ${source.name}`)
+      return true
     } catch (error) {
       updateStatus(
         `error / ${
           error instanceof Error
             ? error.message
             : 'Model yuklenirken beklenmeyen bir hata olustu.'
+        }`,
+      )
+      return false
+    }
+  }
+
+  const loadSampleModel = async () => {
+    updateStatus('loading / sample')
+
+    try {
+      const response = await runAsyncViewerTask(() => fetch(SAMPLE_MODEL_ASSET_URL), {
+        delayMs: 1000,
+      })
+
+      if (!response.ok) {
+        throw new Error('Ornek model yuklenemedi.')
+      }
+
+      const loaded = await loadSource({
+        bytes: await response.arrayBuffer(),
+        extension: 'fbx',
+        name: SAMPLE_MODEL_FILE_NAME,
+      })
+
+      if (!loaded) {
+        return
+      }
+
+      await setPreset('gold')
+      updateStatus('loaded / sample gold')
+    } catch (error) {
+      updateStatus(
+        `error / ${
+          error instanceof Error ? error.message : 'Ornek model yuklenemedi.'
         }`,
       )
     }
@@ -1621,6 +1670,15 @@ function App() {
         <div className="toolbar toolbar-grid">
           <button className="ui-button" onClick={openDesktopDialog} type="button">
             load
+          </button>
+          <button
+            className="chip chip-active toolbar-sample-button"
+            onClick={() => {
+              void loadSampleModel()
+            }}
+            type="button"
+          >
+            load sample
           </button>
           <div className="toggle-row toolbar-toggle">
             <span>smooth</span>

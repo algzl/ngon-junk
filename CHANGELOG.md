@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.1.0 - 2026-04-26
+
+UI and sample-flow update for the first public post-release refresh of `ngon-junk`.
+
+### Updated
+
+- Added a compact `load sample` shortcut directly under `load`
+- Swapped the built-in sample model to the latest curated FBX example
+- Simplified the sample area by removing the large thumbnail card treatment
+- Updated the sample flow for both desktop and cPanel/web builds
+- Refined image export behavior so preview and exported JPG/PNG match more closely
+- Improved loading feedback across long-running material, motion and smoothing actions
+- Continued UI cleanup around frame, motion and wire panels
+
+### Notes
+
+- Sample model naming in the UI is now generic and no longer exposes the original source filename.
+
 ## v0.1.0 - 2026-04-23
 
 Initial GitHub-ready release of `ngon-junk`.

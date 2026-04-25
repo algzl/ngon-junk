@@ -86,6 +86,12 @@
   grid-template-columns: 1fr;
 }
 
+.toolbar-sample-button {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 0.72rem;
+}
+
 .chip {
   padding: 9px 10px;
   font-size: 0.74rem;

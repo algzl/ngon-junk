@@ -5,8 +5,8 @@ The app is built with `Electron + React + TypeScript + Three.js`. Its renderer c
 
 ## Version
 
-- Current version: `v0.1.0`
-- Portable Windows build: `release/ngon-junk-0.1.0.exe`
+- Current version: `v1.1.0`
+- Portable Windows build: generate with `npm run dist:win`
 
 ## Quick Start
 
