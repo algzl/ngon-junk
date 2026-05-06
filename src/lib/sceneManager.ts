@@ -13,6 +13,7 @@ import {
   MOUSE,
   Mesh,
   MeshBasicMaterial,
+  NearestFilter,
   Object3D,
   PCFSoftShadowMap,
   PMREMGenerator,
@@ -50,7 +51,7 @@ const CAMERA_UP = new Vector3()
 const DEG_TO_RAD = Math.PI / 180
 const MODEL_BOUNDS_SIZE = new Vector3()
 const MODEL_BOUNDS_CENTER = new Vector3()
-const OFF_WHITE_BACKGROUND = new Color('#f5f3ec')
+const SMOOTH_WELD_PRECISION = 3
 const MAX_UNDO_ENTRIES = 48
 const MODEL_LAYER = 1
 const TRAIL_LAYER = 2
@@ -97,6 +98,22 @@ export type ViewImageExportOptions = {
   width: number
 }
 
+export type ViewBackgroundGradientStop = {
+  alpha: number
+  color: string
+  id: string
+  position: number
+}
+
+export type ViewBackgroundGradientSettings = {
+  enabled: boolean
+  endX: number
+  endY: number
+  startX: number
+  startY: number
+  stops: ViewBackgroundGradientStop[]
+}
+
 type ViewSnapshot = {
   cameraPosition: [number, number, number]
   controlTarget: [number, number, number]
@@ -131,6 +148,28 @@ const DEFAULT_MOTION_BLUR_SETTINGS: ViewMotionBlurSettings = {
   intensity: 0.52,
   mode: 'trail',
   strobe: 0.48,
+}
+
+const DEFAULT_BACKGROUND_GRADIENT_SETTINGS: ViewBackgroundGradientSettings = {
+  enabled: false,
+  endX: 0.8,
+  endY: 0.18,
+  startX: 0.18,
+  startY: 0.86,
+  stops: [
+    { alpha: 1, color: '#d29595', id: 'start', position: 0.11 },
+    { alpha: 1, color: '#aaa26f', id: 'mid', position: 0.41 },
+    { alpha: 1, color: '#982525', id: 'end', position: 0.96 },
+  ],
+}
+
+const gradientStopToCss = (stop: ViewBackgroundGradientStop) => {
+  const color = new Color(stop.color)
+  const red = Math.round(color.r * 255)
+  const green = Math.round(color.g * 255)
+  const blue = Math.round(color.b * 255)
+  const alpha = Math.min(Math.max(stop.alpha, 0), 1)
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`
 }
 
 const disposeObject = (object: Object3D) => {
@@ -168,9 +207,11 @@ const createFullySmoothedGeometry = (geometry: BufferGeometry) => {
   const normalValues = new Float32Array(position.count * 3)
   const accumulated = new Map<string, Vector3>()
   const keyForIndex = (index: number) =>
-    `${position.getX(index).toFixed(5)}|${position.getY(index).toFixed(5)}|${position
-      .getZ(index)
-      .toFixed(5)}`
+    `${position.getX(index).toFixed(SMOOTH_WELD_PRECISION)}|${position.getY(index).toFixed(
+      SMOOTH_WELD_PRECISION,
+    )}|${position
+        .getZ(index)
+        .toFixed(SMOOTH_WELD_PRECISION)}`
 
   const vertexA = new Vector3()
   const vertexB = new Vector3()
@@ -188,16 +229,14 @@ const createFullySmoothedGeometry = (geometry: BufferGeometry) => {
     edgeAC.subVectors(vertexC, vertexA)
     faceNormal.crossVectors(edgeAB, edgeAC)
 
-    if (faceNormal.lengthSq() <= 0.0000001) {
-      continue
-    }
+      if (faceNormal.lengthSq() <= 0.0000001) {
+        continue
+      }
 
-    faceNormal.normalize()
-
-    ;[index, index + 1, index + 2].forEach((vertexIndex) => {
-      const key = keyForIndex(vertexIndex)
-      const current = accumulated.get(key) ?? new Vector3()
-      current.add(faceNormal)
+      ;[index, index + 1, index + 2].forEach((vertexIndex) => {
+        const key = keyForIndex(vertexIndex)
+        const current = accumulated.get(key) ?? new Vector3()
+        current.add(faceNormal)
       accumulated.set(key, current)
     })
   }
@@ -254,6 +293,41 @@ const cloneTextureValue = (value: unknown) => {
   }
 
   return (value as { clone: () => unknown }).clone()
+}
+
+const getSortedGradientStops = (stops: ViewBackgroundGradientStop[]) =>
+  [...stops].sort((left, right) => left.position - right.position)
+
+const getGradientReferenceColor = (settings: ViewBackgroundGradientSettings) => {
+  if (!settings.stops.length) {
+    return new Color('#ffffff')
+  }
+
+  const stops = getSortedGradientStops(settings.stops)
+  const samplePosition = 0.5
+  let previous = stops[0]
+  let next = stops[stops.length - 1]
+
+  for (let index = 0; index < stops.length - 1; index += 1) {
+    const current = stops[index]
+    const following = stops[index + 1]
+
+    if (
+      samplePosition >= current.position &&
+      samplePosition <= following.position
+    ) {
+      previous = current
+      next = following
+      break
+    }
+  }
+
+  if (previous.position === next.position) {
+    return new Color(previous.color)
+  }
+
+  const mix = (samplePosition - previous.position) / (next.position - previous.position)
+  return new Color(previous.color).lerp(new Color(next.color), mix)
 }
 
 const cloneMaterialValue = (material: unknown) => {
@@ -995,6 +1069,11 @@ export class ModelViewport {
   private antialiasEnabled = DEFAULT_ANTIALIAS_ENABLED
   private animationFrameId = 0
   private backgroundColor = '#ffffff'
+  private backgroundGradient: ViewBackgroundGradientSettings =
+    DEFAULT_BACKGROUND_GRADIENT_SETTINGS
+  private backgroundGridEnabled = false
+  private backgroundPatternKey = ''
+  private backgroundPatternTexture: CanvasTexture | null = null
   private dragStartClientY = 0
   private homeDistance = 8
   private lightRadius = 18
@@ -1018,10 +1097,10 @@ export class ModelViewport {
   private undoStack: ViewSnapshot[] = []
   private wireframeSettings: ViewWireframeSettings = DEFAULT_WIREFRAME_SETTINGS
 
-  constructor(container: HTMLElement) {
-    this.container = container
-    this.scene = new Scene()
-    this.scene.background = OFF_WHITE_BACKGROUND.clone()
+    constructor(container: HTMLElement) {
+      this.container = container
+      this.scene = new Scene()
+      this.scene.background = new Color(this.backgroundColor)
 
     this.camera = new PerspectiveCamera(45, 1, 0.1, 5000)
     this.camera.position.set(8, 6, 8)
@@ -1166,21 +1245,21 @@ export class ModelViewport {
     this.undoStack = []
     this.pendingUndoSnapshot = null
 
-    this.prepareModelForPreview(this.modelRoot)
-    this.applySmoothShading(this.modelRoot)
-    this.modelBounds.getCenter(MODEL_BOUNDS_CENTER)
-    this.modelBaseCenter.copy(MODEL_BOUNDS_CENTER)
-    this.modelCenter.copy(this.modelBaseCenter)
-    this.modelBounds.getSize(MODEL_BOUNDS_SIZE)
-    this.modelFloorY =
-      bounds.min.y - Math.max(MODEL_BOUNDS_SIZE.y * 0.03, 0.02)
-    this.lightRadius = Math.max(MODEL_BOUNDS_SIZE.length() * 1.15, 12)
-    this.rebuildWireOverlay()
-    this.applyWireframeSettings()
-    this.updateFloor()
-    this.frameModel(bounds)
-    this.updateLightSettings(this.lightSettings)
-    this.updateMotionTrail()
+      this.prepareModelForPreview(this.modelRoot)
+      this.applySmoothShading(this.modelRoot)
+      this.modelBounds.getCenter(MODEL_BOUNDS_CENTER)
+      this.modelBaseCenter.copy(MODEL_BOUNDS_CENTER)
+      this.modelCenter.copy(this.modelBaseCenter)
+      this.modelBounds.getSize(MODEL_BOUNDS_SIZE)
+      this.modelFloorY = -0.001
+      this.lightRadius = Math.max(MODEL_BOUNDS_SIZE.length() * 1.15, 12)
+      this.rebuildWireOverlay()
+      this.applyWireframeSettings()
+      this.updateFloor()
+      this.frameModel(bounds)
+      this.setModelOffset(new Vector3(0, -bounds.min.y, 0))
+      this.updateLightSettings(this.lightSettings)
+      this.updateMotionTrail()
   }
 
   applySurface(surface: SurfaceState) {
@@ -1242,6 +1321,31 @@ export class ModelViewport {
 
   setBackgroundColor(color: string) {
     this.backgroundColor = color
+    this.applyBackgroundColor()
+    this.requestRender()
+  }
+
+  setBackgroundGradient(settings: ViewBackgroundGradientSettings) {
+    this.backgroundGradient = {
+      enabled: settings.enabled,
+      endX: Math.min(Math.max(settings.endX, 0), 1),
+      endY: Math.min(Math.max(settings.endY, 0), 1),
+      startX: Math.min(Math.max(settings.startX, 0), 1),
+      startY: Math.min(Math.max(settings.startY, 0), 1),
+      stops: settings.stops.map((stop) => ({
+        alpha: Math.min(Math.max(stop.alpha ?? 1, 0), 1),
+        color: stop.color,
+        id: stop.id,
+        position: Math.min(Math.max(stop.position, 0), 1),
+      })),
+    }
+    this.backgroundPatternKey = ''
+    this.applyBackgroundColor()
+    this.requestRender()
+  }
+
+  setBackgroundGridEnabled(enabled: boolean) {
+    this.backgroundGridEnabled = enabled
     this.applyBackgroundColor()
     this.requestRender()
   }
@@ -1503,12 +1607,14 @@ export class ModelViewport {
     const finalHeight = Math.max(1, Math.round(options.height))
     const renderWidth = finalWidth
     const renderHeight = finalHeight
-    const previewBackground = this.resolveBackgroundColor()
+      const previewBackground = this.resolveBackgroundColor()
 
-    this.camera.aspect = renderWidth / renderHeight
-    this.camera.updateProjectionMatrix()
-    this.syncRenderTargets(renderWidth, renderHeight, 1)
-    this.renderScene(this.composer)
+      this.camera.aspect = renderWidth / renderHeight
+      this.camera.updateProjectionMatrix()
+      this.syncRenderTargets(renderWidth, renderHeight, 1)
+      this.renderScene(this.composer, {
+        disablePatternBackground: options.format === 'png',
+      })
     const colorCanvas = resizeCanvas(cloneCanvas(this.renderer.domElement), finalWidth, finalHeight)
 
     try {
@@ -1731,9 +1837,13 @@ export class ModelViewport {
     this.requestRender()
   }
 
-  private applyBackgroundColor() {
+  private applyBackgroundColor(disablePatternBackground = false) {
     const background = this.resolveBackgroundColor()
-    this.scene.background = background
+    this.scene.background = disablePatternBackground
+      ? null
+      : this.backgroundGridEnabled || this.backgroundGradient.enabled
+        ? this.getBackgroundPatternTexture(background)
+        : background
     const floorMaterial = this.floorShadow.material
     if (!Array.isArray(floorMaterial)) {
       floorMaterial.opacity =
@@ -1743,17 +1853,18 @@ export class ModelViewport {
   }
 
   private resolveBackgroundColor() {
-    const background = new Color(this.backgroundColor)
-
-    if (getColorLuminance(background) > 0.97) {
-      background.lerp(OFF_WHITE_BACKGROUND, 0.72)
+    if (this.backgroundGradient.enabled) {
+      return getGradientReferenceColor(this.backgroundGradient)
     }
 
-    return background
+    return new Color(this.backgroundColor)
   }
 
-  private renderScene(composer: EffectComposer) {
-    this.applyBackgroundColor()
+  private renderScene(
+    composer: EffectComposer,
+    options?: { disablePatternBackground?: boolean },
+  ) {
+    this.applyBackgroundColor(options?.disablePatternBackground)
     const previousMask = this.camera.layers.mask
     this.camera.layers.enable(0)
     this.camera.layers.enable(MODEL_LAYER)
@@ -1893,6 +2004,7 @@ export class ModelViewport {
     const softness = Math.min(Math.max(value, 0), 1)
     const radius = 0.25 + softness * 8
     const floorMaterial = this.floorShadow.material
+    const background = this.resolveBackgroundColor()
 
     this.directionalLight.shadow.radius = radius
     this.sunLight.shadow.radius = radius
@@ -1904,11 +2016,79 @@ export class ModelViewport {
 
     if (!Array.isArray(floorMaterial)) {
       floorMaterial.opacity =
-        (getColorLuminance(this.scene.background as Color) > 0.9 ? 0.3 : 0.24) -
+        (getColorLuminance(background) > 0.9 ? 0.3 : 0.24) -
         softness * 0.1
     }
 
     this.requestRender()
+  }
+
+  private getBackgroundPatternTexture(baseColor: Color) {
+    const width = Math.max(this.container.clientWidth, 320)
+    const height = Math.max(this.container.clientHeight, 320)
+    const gradientKey = this.backgroundGradient.enabled
+      ? `${this.backgroundGradient.startX}|${this.backgroundGradient.startY}|${this.backgroundGradient.endX}|${this.backgroundGradient.endY}|${this.backgroundGradient.stops
+          .map((stop) => `${stop.id}:${stop.color}:${stop.alpha}:${stop.position}`)
+          .join(';')}`
+      : 'none'
+    const key = `${this.backgroundColor}|${this.backgroundGridEnabled}|${gradientKey}|${width}|${height}`
+
+    if (this.backgroundPatternTexture && this.backgroundPatternKey === key) {
+      return this.backgroundPatternTexture
+    }
+
+    this.backgroundPatternTexture?.dispose()
+
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
+
+    if (!context) {
+      const fallback = new CanvasTexture(canvas)
+      return fallback
+    }
+
+    const backgroundHex = `#${baseColor.getHexString()}`
+    const isLight = getColorLuminance(baseColor) > 0.7
+    const dotColor = isLight
+      ? 'rgba(0, 0, 0, 0.28)'
+      : 'rgba(255, 255, 255, 0.22)'
+
+    if (this.backgroundGradient.enabled) {
+      const gradient = context.createLinearGradient(
+        this.backgroundGradient.startX * canvas.width,
+        this.backgroundGradient.startY * canvas.height,
+        this.backgroundGradient.endX * canvas.width,
+        this.backgroundGradient.endY * canvas.height,
+      )
+      const stops = getSortedGradientStops(this.backgroundGradient.stops)
+      stops.forEach((stop) => {
+        gradient.addColorStop(stop.position, gradientStopToCss(stop))
+      })
+      context.fillStyle = gradient
+    } else {
+      context.fillStyle = backgroundHex
+    }
+    context.fillRect(0, 0, canvas.width, canvas.height)
+
+    if (this.backgroundGridEnabled) {
+      context.imageSmoothingEnabled = false
+      context.fillStyle = dotColor
+      for (let y = 0; y < canvas.height; y += 7) {
+        for (let x = 0; x < canvas.width; x += 7) {
+          context.fillRect(x, y, 2, 2)
+        }
+      }
+    }
+
+    const texture = new CanvasTexture(canvas)
+    texture.magFilter = NearestFilter
+    texture.minFilter = NearestFilter
+    texture.needsUpdate = true
+    this.backgroundPatternTexture = texture
+    this.backgroundPatternKey = key
+    return texture
   }
 
   private rebuildWireOverlay() {

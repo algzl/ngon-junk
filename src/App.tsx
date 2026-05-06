@@ -1,7 +1,7 @@
 import { startTransition, useEffect, useRef, useState } from 'react'
 import '@fontsource/space-mono/400.css'
 import '@fontsource/space-mono/700.css'
-import { CanvasTexture, ClampToEdgeWrapping, SRGBColorSpace } from 'three'
+import { CanvasTexture, ClampToEdgeWrapping, Color, SRGBColorSpace } from 'three'
 import './App.css'
 import {
   cloneSurfaceState,
@@ -19,6 +19,8 @@ import {
 import { loadModelFile, type ViewerFileSource } from './lib/modelLoader'
 import {
   ModelViewport,
+  type ViewBackgroundGradientStop,
+  type ViewBackgroundGradientSettings,
   type ViewLightSettings,
   type ViewLightType,
   type ViewMotionBlurSettings,
@@ -40,6 +42,7 @@ type BakeDeliveryMode = 'embedded' | 'separate'
 type PreviewFramePreset = 'landscape' | 'portrait' | 'square'
 type ImageExportScale = 2 | 4
 type ImageExportDpi = 72 | 150 | 300
+type DockPanelKey = 'export' | 'frame' | FloatingPanelKey
 type BakeExportOptions = {
   bakeCombined: boolean
   bakeDiffuseLike: boolean
@@ -50,6 +53,29 @@ type ImageExportOptions = {
   dpi: ImageExportDpi
   longEdge: number
   scale: ImageExportScale | null
+}
+type GradientDragTarget =
+  | {
+      endX: number
+      endY: number
+      kind: 'line'
+      pointerX: number
+      pointerY: number
+      startX: number
+      startY: number
+    }
+  | { kind: 'start' | 'end' }
+  | { id: string; kind: 'stop' }
+type DockPanelPosition = {
+  left: number
+  top: number
+}
+type DockDragTarget = {
+  height: number
+  key: DockPanelKey
+  offsetX: number
+  offsetY: number
+  width: number
 }
 
 const SUPPORTED_FORMATS = ['OBJ', 'FBX', '3DS', 'STL', 'BLEND', 'SKP']
@@ -83,8 +109,8 @@ const UV_SLIDERS: Array<{
   max: number
   step: number
 }> = [
-  { key: 'uvScaleX', label: 'scale x', min: 0.2, max: 8, step: 0.01 },
-  { key: 'uvScaleY', label: 'scale y', min: 0.2, max: 8, step: 0.01 },
+  { key: 'uvScaleX', label: 'scale x', min: 0.2, max: 100, step: 0.01 },
+  { key: 'uvScaleY', label: 'scale y', min: 0.2, max: 100, step: 0.01 },
   { key: 'uvOffsetX', label: 'move x', min: -2, max: 2, step: 0.01 },
   { key: 'uvOffsetY', label: 'move y', min: -2, max: 2, step: 0.01 },
   { key: 'uvRotation', label: 'rotate', min: -180, max: 180, step: 1 },
@@ -219,8 +245,137 @@ const DEFAULT_IMAGE_EXPORT_OPTIONS: ImageExportOptions = {
   longEdge: 1600,
   scale: null,
 }
+const DEFAULT_BACKGROUND_GRADIENT_SETTINGS: ViewBackgroundGradientSettings = {
+  enabled: false,
+  endX: 0.8,
+  endY: 0.18,
+  startX: 0.18,
+  startY: 0.86,
+  stops: [
+    { alpha: 1, color: '#d29595', id: 'start', position: 0.11 },
+    { alpha: 1, color: '#aaa26f', id: 'mid', position: 0.41 },
+    { alpha: 1, color: '#982525', id: 'end', position: 0.96 },
+  ],
+}
 
 const MAX_IMAGE_EXPORT_LONG_EDGE = 8192
+
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value))
+const lerp = (start: number, end: number, amount: number) => start + (end - start) * amount
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value))
+const createGradientStopId = () =>
+  `stop-${Math.random().toString(36).slice(2, 10)}`
+
+const hexToRgb = (hex: string) => {
+  const normalized = hex.replace('#', '')
+  const compact =
+    normalized.length === 3
+      ? normalized
+          .split('')
+          .map((char) => `${char}${char}`)
+          .join('')
+      : normalized
+
+  const value = Number.parseInt(compact, 16)
+  return {
+    b: value & 255,
+    g: (value >> 8) & 255,
+    r: (value >> 16) & 255,
+  }
+}
+
+const gradientStopToCss = (stop: ViewBackgroundGradientStop) => {
+  const { r, g, b } = hexToRgb(stop.color)
+  return `rgba(${r}, ${g}, ${b}, ${clamp(stop.alpha, 0, 1)})`
+}
+
+const hslToHex = (hue: number, saturation: number, lightness: number) =>
+  `#${new Color(
+    `hsl(${((hue % 360) + 360) % 360}, ${clamp(saturation, 0, 100)}%, ${clamp(lightness, 0, 100)}%)`,
+  ).getHexString()}`
+
+const createRandomGradientSettings = (): ViewBackgroundGradientSettings => {
+  const baseHue = Math.random() * 360
+  const scheme = Math.random() > 0.45 ? 'analogous' : 'split'
+  const hueOffsets =
+    scheme === 'analogous'
+      ? [-22 + Math.random() * 8, 2 + Math.random() * 10, 28 + Math.random() * 12]
+      : [-34 + Math.random() * 8, -6 + Math.random() * 12, 36 + Math.random() * 12]
+  const saturationBase = 52 + Math.random() * 18
+  const lightnessBase = 54 + Math.random() * 12
+  const centerX = 0.5 + (Math.random() - 0.5) * 0.16
+  const centerY = 0.5 + (Math.random() - 0.5) * 0.16
+  const angle = Math.random() * Math.PI * 2
+  const spread = 0.58 + Math.random() * 0.28
+  const halfSpreadX = Math.cos(angle) * spread * 0.5
+  const halfSpreadY = Math.sin(angle) * spread * 0.5
+
+  return {
+    enabled: true,
+    startX: clamp01(centerX - halfSpreadX),
+    startY: clamp01(centerY - halfSpreadY),
+    endX: clamp01(centerX + halfSpreadX),
+    endY: clamp01(centerY + halfSpreadY),
+    stops: [
+      {
+        alpha: 1,
+        color: hslToHex(baseHue + hueOffsets[0], saturationBase - 4, lightnessBase + 16),
+        id: 'start',
+        position: 0.08 + Math.random() * 0.1,
+      },
+      {
+        alpha: 1,
+        color: hslToHex(baseHue + hueOffsets[1], saturationBase - 10, lightnessBase + 2),
+        id: 'mid',
+        position: 0.38 + Math.random() * 0.16,
+      },
+      {
+        alpha: 1,
+        color: hslToHex(baseHue + hueOffsets[2], saturationBase + 8, lightnessBase - 18),
+        id: 'end',
+        position: 0.86 + Math.random() * 0.1,
+      },
+    ],
+  }
+}
+
+const buildGradientCss = (gradient: ViewBackgroundGradientSettings) => {
+  const angle =
+    (Math.atan2(
+      gradient.endY - gradient.startY,
+      gradient.endX - gradient.startX,
+    ) *
+      180) /
+      Math.PI +
+    90
+  const stops = [...gradient.stops]
+    .sort((left, right) => left.position - right.position)
+    .map((stop) => `${gradientStopToCss(stop)} ${Math.round(stop.position * 100)}%`)
+    .join(', ')
+  return `linear-gradient(${angle}deg, ${stops})`
+}
+
+const projectPointOnGradient = (
+  gradient: ViewBackgroundGradientSettings,
+  pointX: number,
+  pointY: number,
+) => {
+  const startX = gradient.startX
+  const startY = gradient.startY
+  const directionX = gradient.endX - startX
+  const directionY = gradient.endY - startY
+  const lengthSquared = directionX * directionX + directionY * directionY
+
+  if (lengthSquared <= 0.000001) {
+    return 0
+  }
+
+  const ratio =
+    ((pointX - startX) * directionX + (pointY - startY) * directionY) / lengthSquared
+
+  return clamp01(ratio)
+}
 
 const LIGHT_PRESETS: Record<ViewLightType, ViewLightSettings> = {
   studio: {
@@ -510,7 +665,24 @@ const PANEL_TITLES: Record<FloatingPanelKey, string> = {
   wire: 'wire',
 }
 
+const DEFAULT_COLLAPSED_PANELS: Record<FloatingPanelKey, boolean> = {
+  light: false,
+  motion: false,
+  uv: false,
+  wire: false,
+}
+
+const DEFAULT_DOCK_PANEL_POSITIONS: Record<DockPanelKey, DockPanelPosition | null> = {
+  export: null,
+  frame: null,
+  light: null,
+  motion: null,
+  uv: null,
+  wire: null,
+}
+
 function App() {
+  const viewerPanelRef = useRef<HTMLElement | null>(null)
   const viewerHostRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const viewportRef = useRef<ModelViewport | null>(null)
@@ -534,6 +706,15 @@ function App() {
   )
   const [materialMode, setMaterialMode] = useState<MaterialMode>('original')
   const [backgroundColor, setBackgroundColor] = useState('#ffffff')
+  const [backgroundGridEnabled, setBackgroundGridEnabled] = useState(false)
+  const [backgroundGradient, setBackgroundGradient] =
+    useState<ViewBackgroundGradientSettings>(DEFAULT_BACKGROUND_GRADIENT_SETTINGS)
+  const [gradientPanelOpen, setGradientPanelOpen] = useState(false)
+  const [selectedGradientStopId, setSelectedGradientStopId] = useState<string | null>(
+    DEFAULT_BACKGROUND_GRADIENT_SETTINGS.stops[1]?.id ??
+      DEFAULT_BACKGROUND_GRADIENT_SETTINGS.stops[0]?.id ??
+      null,
+  )
   const [antialiasEnabled, setAntialiasEnabled] = useState(true)
   const [light, setLight] = useState<ViewLightSettings>(DEFAULT_LIGHT_SETTINGS)
   const [shadowsEnabled, setShadowsEnabled] = useState(true)
@@ -564,12 +745,15 @@ function App() {
   const [smoothShadingEnabled, setSmoothShadingEnabled] = useState(true)
   const [motionBlur, setMotionBlur] =
     useState<ViewMotionBlurSettings>(DEFAULT_MOTION_SETTINGS)
-  const [collapsedPanels, setCollapsedPanels] = useState<Record<FloatingPanelKey, boolean>>({
-    light: false,
-    motion: false,
-    uv: false,
-    wire: false,
-  })
+  const [collapsedPanels, setCollapsedPanels] =
+    useState<Record<FloatingPanelKey, boolean>>(DEFAULT_COLLAPSED_PANELS)
+  const [panelPositions, setPanelPositions] = useState<Record<DockPanelKey, DockPanelPosition | null>>(
+    DEFAULT_DOCK_PANEL_POSITIONS,
+  )
+  const [panelDragTarget, setPanelDragTarget] = useState<DockDragTarget | null>(null)
+  const [gradientDragTarget, setGradientDragTarget] =
+    useState<GradientDragTarget | null>(null)
+  const [viewerBounds, setViewerBounds] = useState({ height: 0, width: 0 })
   const presetDefaults = createPresetSurface(surface.preset)
   const lightDefaults = LIGHT_PRESETS[light.type]
   const activeFrame = FRAME_OPTIONS.find((item) => item.key === previewFramePreset) ?? null
@@ -714,6 +898,7 @@ function App() {
 
     const updateAspect = () => {
       if (host.clientWidth > 0 && host.clientHeight > 0) {
+        setViewerBounds({ height: host.clientHeight, width: host.clientWidth })
         setLiveViewerAspect(host.clientWidth / host.clientHeight)
       }
     }
@@ -755,6 +940,36 @@ function App() {
   }, [backgroundColor])
 
   useEffect(() => {
+    viewportRef.current?.setBackgroundGridEnabled(backgroundGridEnabled)
+  }, [backgroundGridEnabled])
+
+  useEffect(() => {
+    viewportRef.current?.setBackgroundGradient(backgroundGradient)
+  }, [backgroundGradient])
+
+  useEffect(() => {
+    if (!backgroundGradient.enabled && gradientPanelOpen) {
+      setGradientPanelOpen(false)
+    }
+  }, [backgroundGradient.enabled, gradientPanelOpen])
+
+  useEffect(() => {
+    if (!backgroundGradient.stops.length) {
+      setSelectedGradientStopId(null)
+      return
+    }
+
+    const matchedStop = backgroundGradient.stops.find(
+      (stop) => stop.id === selectedGradientStopId,
+    )
+    if (matchedStop) {
+      return
+    }
+
+    setSelectedGradientStopId(backgroundGradient.stops[0].id)
+  }, [backgroundGradient.stops, selectedGradientStopId])
+
+  useEffect(() => {
     viewportRef.current?.setAntialiasEnabled(antialiasEnabled)
   }, [antialiasEnabled])
 
@@ -774,6 +989,146 @@ function App() {
       requestAnimationFrame(() => finishViewerBusy())
     }
   }, [motionBlur])
+
+  useEffect(() => {
+    if (!gradientDragTarget) {
+      return
+    }
+
+    const host = viewerHostRef.current
+    if (!host) {
+      return
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const rect = host.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) {
+        return
+      }
+
+      const normalizedX = clamp01((event.clientX - rect.left) / rect.width)
+      const normalizedY = clamp01((event.clientY - rect.top) / rect.height)
+
+      setBackgroundGradient((current) => {
+        if (gradientDragTarget.kind === 'line') {
+          const nextDeltaX = normalizedX - gradientDragTarget.pointerX
+          const nextDeltaY = normalizedY - gradientDragTarget.pointerY
+          const clampedDeltaX = clamp(
+            nextDeltaX,
+            -gradientDragTarget.startX,
+            1 - gradientDragTarget.endX,
+          )
+          const clampedDeltaY = clamp(
+            nextDeltaY,
+            -gradientDragTarget.startY,
+            1 - gradientDragTarget.endY,
+          )
+
+          return {
+            ...current,
+            endX: gradientDragTarget.endX + clampedDeltaX,
+            endY: gradientDragTarget.endY + clampedDeltaY,
+            startX: gradientDragTarget.startX + clampedDeltaX,
+            startY: gradientDragTarget.startY + clampedDeltaY,
+          }
+        }
+
+        if (gradientDragTarget.kind === 'start') {
+          return {
+            ...current,
+            startX: normalizedX,
+            startY: normalizedY,
+          }
+        }
+
+        if (gradientDragTarget.kind === 'end') {
+          return {
+            ...current,
+            endX: normalizedX,
+            endY: normalizedY,
+          }
+        }
+
+        if (gradientDragTarget.kind !== 'stop') {
+          return current
+        }
+
+        const stopId = gradientDragTarget.id
+        const nextPosition = projectPointOnGradient(current, normalizedX, normalizedY)
+        return {
+          ...current,
+          stops: current.stops.map((stop) =>
+            stop.id === stopId
+              ? { ...stop, position: nextPosition }
+              : stop,
+          ),
+        }
+      })
+    }
+
+    const handlePointerUp = () => {
+      setGradientDragTarget(null)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+  }, [gradientDragTarget])
+
+  useEffect(() => {
+    if (!panelDragTarget) {
+      return
+    }
+
+    const container = viewerPanelRef.current
+    if (!container) {
+      return
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const rect = container.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) {
+        return
+      }
+
+      const maxLeft = Math.max(0, rect.width - panelDragTarget.width)
+      const maxTop = Math.max(0, rect.height - panelDragTarget.height)
+      const nextLeft = clamp(
+        event.clientX - rect.left - panelDragTarget.offsetX,
+        0,
+        maxLeft,
+      )
+      const nextTop = clamp(
+        event.clientY - rect.top - panelDragTarget.offsetY,
+        0,
+        maxTop,
+      )
+
+      setPanelPositions((current) => ({
+        ...current,
+        [panelDragTarget.key]: {
+          left: nextLeft,
+          top: nextTop,
+        },
+      }))
+    }
+
+    const handlePointerUp = () => {
+      setPanelDragTarget(null)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+  }, [panelDragTarget])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1066,6 +1421,161 @@ function App() {
     }))
   }
 
+  const resetDockLayout = () => {
+    setPanelPositions(DEFAULT_DOCK_PANEL_POSITIONS)
+    setCollapsedPanels(
+      Object.fromEntries(
+        Object.keys(DEFAULT_COLLAPSED_PANELS).map((key) => [key, true]),
+      ) as Record<FloatingPanelKey, boolean>,
+    )
+  }
+
+  const getDockPanelStyle = (key: DockPanelKey) => {
+    const position = panelPositions[key]
+    if (!position) {
+      return undefined
+    }
+
+    return {
+      bottom: 'auto',
+      left: position.left,
+      right: 'auto',
+      top: position.top,
+      transform: 'none',
+    } as const
+  }
+
+  const beginDockPanelDrag = (
+    event: React.PointerEvent<HTMLElement>,
+    key: DockPanelKey,
+  ) => {
+    const interactiveTarget = (event.target as HTMLElement | null)?.closest(
+      'button, input, select, label',
+    )
+
+    if (interactiveTarget) {
+      return
+    }
+
+    const panelElement = (event.currentTarget as HTMLElement).closest<HTMLElement>(
+      '[data-dock-key]',
+    )
+    const container = viewerPanelRef.current
+
+    if (!panelElement || !container) {
+      return
+    }
+
+    const panelRect = panelElement.getBoundingClientRect()
+    const containerRect = container.getBoundingClientRect()
+
+    event.preventDefault()
+    setPanelPositions((current) => ({
+      ...current,
+      [key]: {
+        left: panelRect.left - containerRect.left,
+        top: panelRect.top - containerRect.top,
+      },
+    }))
+    setPanelDragTarget({
+      height: panelRect.height,
+      key,
+      offsetX: event.clientX - panelRect.left,
+      offsetY: event.clientY - panelRect.top,
+      width: panelRect.width,
+    })
+  }
+
+  const applyRandomBackgroundGradient = () => {
+    const nextGradient = createRandomGradientSettings()
+    setBackgroundGradient(nextGradient)
+    setGradientPanelOpen(true)
+    setSelectedGradientStopId(nextGradient.stops[1]?.id ?? nextGradient.stops[0]?.id ?? null)
+  }
+
+  const toggleBackgroundGradientPanel = () => {
+    setGradientPanelOpen((current) => !current)
+  }
+
+  const setGradientStopColor = (id: string, color: string) => {
+    setBackgroundGradient((current) => ({
+      ...current,
+      stops: current.stops.map((stop) =>
+        stop.id === id ? { ...stop, color } : stop,
+      ),
+    }))
+  }
+
+  const setGradientStopAlpha = (id: string, alpha: number) => {
+    setBackgroundGradient((current) => ({
+      ...current,
+      stops: current.stops.map((stop) =>
+        stop.id === id ? { ...stop, alpha: clamp(alpha, 0, 1) } : stop,
+      ),
+    }))
+  }
+
+  const setGradientStopPosition = (id: string, position: number) => {
+    setBackgroundGradient((current) => ({
+      ...current,
+      stops: current.stops.map((stop) =>
+        stop.id === id ? { ...stop, position: clamp01(position) } : stop,
+      ),
+    }))
+  }
+
+  const addGradientStopAtEdge = (edge: 'start' | 'end') => {
+    setBackgroundGradient((current) => {
+      const sortedStops = [...current.stops].sort(
+        (left, right) => left.position - right.position,
+      )
+      const anchorStop =
+        edge === 'start'
+          ? sortedStops[0] ?? current.stops[0]
+          : sortedStops[sortedStops.length - 1] ?? current.stops[current.stops.length - 1]
+
+      if (!anchorStop) {
+        return current
+      }
+
+      const position =
+        edge === 'start'
+          ? clamp01(anchorStop.position * 0.5)
+          : clamp01(anchorStop.position + (1 - anchorStop.position) * 0.5)
+
+      const nextStop: ViewBackgroundGradientStop = {
+        alpha: anchorStop.alpha,
+        color: anchorStop.color,
+        id: createGradientStopId(),
+        position,
+      }
+
+      setSelectedGradientStopId(nextStop.id)
+      return {
+        ...current,
+        stops: [...current.stops, nextStop],
+      }
+    })
+  }
+
+  const removeGradientStop = (id: string) => {
+    setBackgroundGradient((current) => {
+      if (current.stops.length <= 2) {
+        return current
+      }
+
+      const nextStops = current.stops.filter((stop) => stop.id !== id)
+      const fallbackStop =
+        nextStops[Math.min(nextStops.length - 1, 1)] ?? nextStops[0] ?? null
+      setSelectedGradientStopId(fallbackStop?.id ?? null)
+
+      return {
+        ...current,
+        stops: nextStops,
+      }
+    })
+  }
+
   const toggleMotionBlur = async () => {
     await runMotionToggleTask(() => {
       setMotionBlur((current) => ({
@@ -1081,6 +1591,28 @@ function App() {
       }))
     })
   }
+
+  const gradientLineStart = {
+    x: backgroundGradient.startX * viewerBounds.width,
+    y: backgroundGradient.startY * viewerBounds.height,
+  }
+  const gradientLineEnd = {
+    x: backgroundGradient.endX * viewerBounds.width,
+    y: backgroundGradient.endY * viewerBounds.height,
+  }
+  const gradientDeltaX = gradientLineEnd.x - gradientLineStart.x
+  const gradientDeltaY = gradientLineEnd.y - gradientLineStart.y
+  const gradientLength = Math.max(
+    1,
+    Math.sqrt(gradientDeltaX * gradientDeltaX + gradientDeltaY * gradientDeltaY),
+  )
+  const gradientAngle =
+    (Math.atan2(gradientDeltaY, gradientDeltaX) * 180) / Math.PI
+  const gradientCss = buildGradientCss(backgroundGradient)
+  const selectedGradientStop =
+    backgroundGradient.stops.find((stop) => stop.id === selectedGradientStopId) ??
+    backgroundGradient.stops[0] ??
+    null
 
   const openDesktopDialog = async () => {
     const picker = window.desktopBridge?.openModelDialog
@@ -1847,6 +2379,7 @@ function App() {
 
       <section
         className={`viewer-panel ${isDragging ? 'drag-active' : ''}`}
+        ref={viewerPanelRef}
         onDragEnter={() => setIsDragging(true)}
         onDragLeave={(event) => {
           if (event.currentTarget === event.target) {
@@ -1866,6 +2399,114 @@ function App() {
             className={`viewer-canvas ${activeFrame ? `viewer-frame-${previewFramePreset}` : 'viewer-frame-free'}`}
             ref={viewerHostRef}
           >
+            {backgroundGridEnabled ? <div className="viewer-grid-overlay" /> : null}
+            {backgroundGradient.enabled && gradientPanelOpen ? (
+              <>
+                <div className="gradient-editor-overlay">
+                  <div
+                    className="gradient-editor-line"
+                    onPointerDown={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      setGradientDragTarget({
+                        endX: backgroundGradient.endX,
+                        endY: backgroundGradient.endY,
+                        kind: 'line',
+                        pointerX: backgroundGradient.startX + (backgroundGradient.endX - backgroundGradient.startX) * 0.5,
+                        pointerY: backgroundGradient.startY + (backgroundGradient.endY - backgroundGradient.startY) * 0.5,
+                        startX: backgroundGradient.startX,
+                        startY: backgroundGradient.startY,
+                      })
+                    }}
+                    style={{
+                      left: gradientLineStart.x,
+                      top: gradientLineStart.y,
+                      transform: `rotate(${gradientAngle}deg)`,
+                      width: gradientLength,
+                    }}
+                  />
+                  <button
+                    className="gradient-editor-handle gradient-editor-endpoint"
+                    onPointerDown={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      setGradientDragTarget({ kind: 'start' })
+                    }}
+                    style={{
+                      left: gradientLineStart.x,
+                      top: gradientLineStart.y,
+                    }}
+                    type="button"
+                  />
+                  <button
+                    className="gradient-editor-add gradient-editor-add-start"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      addGradientStopAtEdge('start')
+                    }}
+                    style={{
+                      left: gradientLineStart.x,
+                      top: gradientLineStart.y,
+                    }}
+                    type="button"
+                  >
+                    +
+                  </button>
+                  <button
+                    className="gradient-editor-handle gradient-editor-endpoint"
+                    onPointerDown={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      setGradientDragTarget({ kind: 'end' })
+                    }}
+                    style={{
+                      left: gradientLineEnd.x,
+                      top: gradientLineEnd.y,
+                    }}
+                    type="button"
+                  />
+                  <button
+                    className="gradient-editor-add gradient-editor-add-end"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      addGradientStopAtEdge('end')
+                    }}
+                    style={{
+                      left: gradientLineEnd.x,
+                      top: gradientLineEnd.y,
+                    }}
+                    type="button"
+                  >
+                    +
+                  </button>
+                  {backgroundGradient.stops.map((stop) => {
+                    const stopX = lerp(gradientLineStart.x, gradientLineEnd.x, stop.position)
+                    const stopY = lerp(gradientLineStart.y, gradientLineEnd.y, stop.position)
+
+                    return (
+                      <button
+                        className="gradient-editor-handle gradient-editor-stop"
+                        key={stop.id}
+                        onPointerDown={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          setSelectedGradientStopId(stop.id)
+                          setGradientDragTarget({ id: stop.id, kind: 'stop' })
+                        }}
+                        style={{
+                          background: gradientStopToCss(stop),
+                          left: stopX,
+                          top: stopY,
+                        }}
+                        type="button"
+                      />
+                    )
+                  })}
+                </div>
+              </>
+            ) : null}
             {isViewerBusy ? (
               <div className="viewer-busy">
                 <div className="viewer-busy-spinner" />
@@ -1874,7 +2515,22 @@ function App() {
           </div>
         </div>
 
-        <section className="frame-panel">
+        <section
+          className="frame-panel"
+          data-dock-key="frame"
+          style={getDockPanelStyle('frame')}
+        >
+          <button
+            className="chip frame-dock-reset-chip"
+            onClick={resetDockLayout}
+            type="button"
+          >
+            dock
+          </button>
+          <div
+            className="frame-panel-drag-strip panel-drag-handle"
+            onPointerDown={(event) => beginDockPanelDrag(event, 'frame')}
+          />
           {FRAME_OPTIONS.map((item) => (
             <button
               key={item.key}
@@ -1891,8 +2547,15 @@ function App() {
           ))}
         </section>
 
-        <section className={`light-panel ${collapsedPanels.light ? 'panel-collapsed' : ''}`}>
-          <div className="light-topline">
+        <section
+          className={`light-panel ${collapsedPanels.light ? 'panel-collapsed' : ''}`}
+          data-dock-key="light"
+          style={getDockPanelStyle('light')}
+        >
+          <div
+            className="light-topline panel-drag-handle"
+            onPointerDown={(event) => beginDockPanelDrag(event, 'light')}
+          >
             <div className="light-title">{PANEL_TITLES.light}</div>
             <button
               className="chip panel-collapse-chip"
@@ -1964,8 +2627,15 @@ function App() {
         </section>
 
         {materialMode === 'custom' ? (
-          <section className={`uv-panel ${collapsedPanels.uv ? 'panel-collapsed' : ''}`}>
-            <div className="uv-topline">
+          <section
+            className={`uv-panel ${collapsedPanels.uv ? 'panel-collapsed' : ''}`}
+            data-dock-key="uv"
+            style={getDockPanelStyle('uv')}
+          >
+            <div
+              className="uv-topline panel-drag-handle"
+              onPointerDown={(event) => beginDockPanelDrag(event, 'uv')}
+            >
               <div className="uv-title">{PANEL_TITLES.uv}</div>
               <div className="panel-topline-actions">
                 <button
@@ -2010,8 +2680,15 @@ function App() {
           </section>
         ) : null}
 
-        <section className={`retopo-panel ${collapsedPanels.wire ? 'panel-collapsed' : ''}`}>
-          <div className="retopo-topline">
+        <section
+          className={`retopo-panel ${collapsedPanels.wire ? 'panel-collapsed' : ''}`}
+          data-dock-key="wire"
+          style={getDockPanelStyle('wire')}
+        >
+          <div
+            className="retopo-topline panel-drag-handle"
+            onPointerDown={(event) => beginDockPanelDrag(event, 'wire')}
+          >
             <div className="retopo-title">{PANEL_TITLES.wire}</div>
             <div className="panel-topline-actions">
               <div className="wire-toggle-group">
@@ -2064,8 +2741,15 @@ function App() {
           ) : null}
         </section>
 
-        <section className={`aa-panel ${collapsedPanels.motion ? 'panel-collapsed' : ''}`}>
-          <div className="light-topline">
+        <section
+          className={`aa-panel ${collapsedPanels.motion ? 'panel-collapsed' : ''}`}
+          data-dock-key="motion"
+          style={getDockPanelStyle('motion')}
+        >
+          <div
+            className="light-topline panel-drag-handle"
+            onPointerDown={(event) => beginDockPanelDrag(event, 'motion')}
+          >
             <div className="light-title">{PANEL_TITLES.motion}</div>
             <button
               className="chip panel-collapse-chip"
@@ -2136,16 +2820,136 @@ function App() {
             ) : null}
           </section>
 
-        <div className="viewer-export-bar">
-          <div className="viewer-export-title">export</div>
-          <div className="viewer-export-group">
-            {BACKGROUND_PRESETS.map((item) => (
+        <div
+          className="viewer-export-bar"
+          data-dock-key="export"
+          style={getDockPanelStyle('export')}
+        >
+          <div
+            className="viewer-export-title panel-drag-handle"
+            onPointerDown={(event) => beginDockPanelDrag(event, 'export')}
+          >
+            export
+          </div>
+            <div className="viewer-export-group">
+              <div className="viewer-gradient-stack">
+                {backgroundGradient.enabled && gradientPanelOpen ? (
+                  <section className="gradient-editor-panel">
+                    <div className="gradient-editor-strip" style={{ backgroundImage: gradientCss }} />
+                    {selectedGradientStop ? (
+                      <div className="gradient-editor-rows">
+                        <div className="gradient-editor-row gradient-editor-row-stop">
+                          <button
+                            className="gradient-editor-stop-preview"
+                            onClick={() => setSelectedGradientStopId(selectedGradientStop.id)}
+                            style={{
+                              background: gradientStopToCss(selectedGradientStop),
+                            }}
+                            type="button"
+                          />
+                          <input
+                            className="gradient-editor-color"
+                            onChange={(event) =>
+                              setGradientStopColor(selectedGradientStop.id, event.target.value)
+                            }
+                            type="color"
+                            value={selectedGradientStop.color}
+                          />
+                        </div>
+                        <div className="gradient-editor-row">
+                          <span className="gradient-editor-label">pos</span>
+                          <input
+                            className="value-input"
+                            max={100}
+                            min={0}
+                            onChange={(event) => {
+                              const nextValue = Number(event.target.value)
+                              if (Number.isNaN(nextValue)) {
+                                return
+                              }
+
+                              setGradientStopPosition(selectedGradientStop.id, nextValue / 100)
+                            }}
+                            step={1}
+                            type="number"
+                            value={Math.round(selectedGradientStop.position * 100)}
+                          />
+                        </div>
+                        <div className="gradient-editor-row">
+                          <span className="gradient-editor-label">alpha</span>
+                          <input
+                            className="value-input"
+                            max={100}
+                            min={0}
+                            onChange={(event) => {
+                              const nextValue = Number(event.target.value)
+                              if (Number.isNaN(nextValue)) {
+                                return
+                              }
+
+                              setGradientStopAlpha(selectedGradientStop.id, nextValue / 100)
+                            }}
+                            step={1}
+                            type="number"
+                            value={Math.round(selectedGradientStop.alpha * 100)}
+                          />
+                        </div>
+                        <button
+                          className="chip gradient-editor-remove"
+                          onClick={() => removeGradientStop(selectedGradientStop.id)}
+                          type="button"
+                        >
+                          remove color
+                        </button>
+                      </div>
+                    ) : null}
+                  </section>
+                ) : null}
+                <div className="viewer-gradient-controls">
+                  <button
+                    className={`chip viewer-export-chip ${
+                      backgroundGradient.enabled ? 'chip-active' : ''
+                    }`}
+                    onClick={applyRandomBackgroundGradient}
+                    type="button"
+                  >
+                    gradient
+                  </button>
+                  <button
+                    className={`chip viewer-export-chip viewer-gradient-toggle ${
+                      gradientPanelOpen && backgroundGradient.enabled ? 'chip-active' : ''
+                    }`}
+                    onClick={toggleBackgroundGradientPanel}
+                    type="button"
+                  >
+                    {gradientPanelOpen && backgroundGradient.enabled ? '-' : '+'}
+                  </button>
+                </div>
+              </div>
               <button
-                key={item.key}
                 className={`chip viewer-export-chip ${
-                  backgroundColor === item.key ? 'chip-active' : ''
+                  backgroundGridEnabled ? 'chip-active' : ''
                 }`}
-                onClick={() => setBackgroundColor(item.key)}
+                onClick={() =>
+                  setBackgroundGridEnabled((current) => !current)
+                }
+                type="button"
+              >
+                grid
+              </button>
+              {BACKGROUND_PRESETS.map((item) => (
+                <button
+                  key={item.key}
+                  className={`chip viewer-export-chip ${
+                    backgroundColor === item.key ? 'chip-active' : ''
+                }`}
+                onClick={() => {
+                  setBackgroundGradient((current) => ({
+                    ...current,
+                    enabled: false,
+                  }))
+                  setBackgroundColor(item.key)
+                }}
                 type="button"
               >
                 {item.label}
@@ -2155,12 +2959,18 @@ function App() {
               <span>bg:</span>
               <input
                 className="color-input"
-                onChange={(event) => setBackgroundColor(event.target.value)}
+                onChange={(event) => {
+                  setBackgroundGradient((current) => ({
+                    ...current,
+                    enabled: false,
+                  }))
+                  setBackgroundColor(event.target.value)
+                }}
                 type="color"
-                value={backgroundColor}
-              />
-            </label>
-          </div>
+                  value={backgroundColor}
+                />
+              </label>
+            </div>
           <div className="viewer-export-group viewer-export-group-compact">
             {IMAGE_EXPORT_OPTIONS.map((item) => (
               <button

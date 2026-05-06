@@ -246,8 +246,32 @@
   left: 50%;
   transform: translateX(-50%);
   display: flex;
+  align-items: center;
+  flex-direction: row;
+  flex-wrap: nowrap;
   gap: 8px;
+  width: max-content;
+  white-space: nowrap;
   z-index: 6;
+}
+
+.frame-panel > * {
+  flex: 0 0 auto;
+}
+
+.frame-panel-drag-strip {
+  width: 22px;
+  height: 22px;
+  border: 1px dashed #000000;
+  background: rgba(255, 255, 255, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.frame-dock-reset-chip {
+  min-width: 42px;
 }
 
 .app-shell.motion-lock .sidebar,
@@ -281,6 +305,15 @@
   background: #ffffff;
 }
 
+.viewer-grid-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(0, 0, 0, 0.14) 0.9px, transparent 1px);
+  background-size: 7px 7px;
+}
+
 .viewer-frame-landscape {
   width: 100%;
   max-height: 100%;
@@ -309,6 +342,149 @@
 
 .viewer-canvas canvas {
   display: block;
+}
+
+.gradient-editor-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.gradient-editor-line {
+  position: absolute;
+  height: 2px;
+  transform-origin: 0 50%;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.14);
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.gradient-editor-handle {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18);
+  transform: translate(-50%, -50%) rotate(45deg);
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.gradient-editor-endpoint {
+  background: #ffffff;
+  border-radius: 4px;
+}
+
+.gradient-editor-stop {
+  border-radius: 3px;
+}
+
+.gradient-editor-panel {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 228px;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #000000;
+  background: rgba(255, 255, 255, 0.94);
+  z-index: 3;
+  pointer-events: auto;
+}
+
+.gradient-editor-add {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border: 1px solid #000000;
+  background: rgba(255, 255, 255, 0.96);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  z-index: 3;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.gradient-editor-add-start {
+  margin-left: -28px;
+}
+
+.gradient-editor-add-end {
+  margin-left: 28px;
+}
+
+.viewer-gradient-stack {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.viewer-gradient-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.viewer-gradient-toggle {
+  min-width: 28px;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.gradient-editor-strip {
+  height: 28px;
+  border: 1px solid #000000;
+}
+
+.gradient-editor-rows {
+  display: grid;
+  gap: 8px;
+}
+
+.gradient-editor-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.gradient-editor-row-stop {
+  grid-template-columns: 28px 34px;
+}
+
+.gradient-editor-label {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.7rem;
+  text-transform: lowercase;
+}
+
+.gradient-editor-color {
+  width: 34px;
+  height: 26px;
+  border: 1px solid #000000;
+  background: #ffffff;
+  padding: 0;
+}
+
+.gradient-editor-stop-preview {
+  width: 28px;
+  height: 26px;
+  border: 1px solid #000000;
+  padding: 0;
+}
+
+.gradient-editor-remove {
+  justify-content: center;
 }
 
 .viewer-busy {
@@ -582,6 +758,15 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.panel-drag-handle {
+  cursor: grab;
+  user-select: none;
+}
+
+.panel-drag-handle:active {
+  cursor: grabbing;
 }
 
 .panel-collapse-chip {
