@@ -245,17 +245,36 @@
   top: 18px;
   left: 50%;
   transform: translateX(-50%);
-  display: flex;
+  display: inline-flex !important;
   align-items: center;
-  flex-direction: row;
-  flex-wrap: nowrap;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
   gap: 8px;
-  width: max-content;
+  width: max-content !important;
+  min-width: 0;
   white-space: nowrap;
   z-index: 6;
 }
 
-.frame-panel > * {
+.frame-panel-row {
+  display: inline-flex !important;
+  align-items: center;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  gap: 8px;
+  width: max-content !important;
+  min-width: 0;
+  white-space: nowrap;
+  justify-content: center;
+}
+
+.frame-panel-row > * {
+  flex: 0 0 auto;
+}
+
+.frame-panel .chip,
+.frame-panel .frame-panel-drag-strip {
+  display: inline-flex;
   flex: 0 0 auto;
 }
 
@@ -310,8 +329,9 @@
   inset: 0;
   z-index: 1;
   pointer-events: none;
-  background-image: radial-gradient(rgba(0, 0, 0, 0.14) 0.9px, transparent 1px);
+  background-image: radial-gradient(rgba(0, 0, 0, 0.3) 0.7px, transparent 0.8px);
   background-size: 7px 7px;
+  background-position: 0 0;
 }
 
 .viewer-frame-landscape {
@@ -342,6 +362,9 @@
 
 .viewer-canvas canvas {
   display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
 }
 
 .gradient-editor-overlay {
@@ -379,6 +402,30 @@
 
 .gradient-editor-stop {
   border-radius: 3px;
+}
+
+.gradient-editor-stop-selected {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.96), 0 0 0 4px rgba(0, 0, 0, 0.32);
+}
+
+.gradient-editor-stop-popover {
+  position: absolute;
+  display: grid;
+  gap: 8px;
+  min-width: 184px;
+  padding: 8px;
+  border: 1px solid #000000;
+  background: rgba(255, 255, 255, 0.96);
+  transform: translate(-50%, calc(-100% - 18px));
+  z-index: 4;
+  pointer-events: auto;
+}
+
+.gradient-editor-stop-popover-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
 }
 
 .gradient-editor-panel {
@@ -435,12 +482,6 @@
   gap: 4px;
 }
 
-.viewer-gradient-toggle {
-  min-width: 28px;
-  padding-left: 0;
-  padding-right: 0;
-}
-
 .gradient-editor-strip {
   height: 28px;
   border: 1px solid #000000;
@@ -458,8 +499,8 @@
   align-items: center;
 }
 
-.gradient-editor-row-stop {
-  grid-template-columns: 28px 34px;
+.gradient-editor-row-color {
+  grid-template-columns: 34px minmax(0, 1fr);
 }
 
 .gradient-editor-label {
@@ -468,19 +509,19 @@
   text-transform: lowercase;
 }
 
+.gradient-editor-inline-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .gradient-editor-color {
   width: 34px;
   height: 26px;
   border: 1px solid #000000;
   background: #ffffff;
   padding: 0;
-}
-
-.gradient-editor-stop-preview {
-  width: 28px;
-  height: 26px;
-  border: 1px solid #000000;
-  padding: 0;
+  justify-self: start;
 }
 
 .gradient-editor-remove {
@@ -495,7 +536,7 @@
   z-index: 5;
   pointer-events: none;
   background-color: rgba(233, 233, 233, 0.28);
-  background-image: radial-gradient(rgba(0, 0, 0, 0.14) 0.9px, transparent 1px);
+  background-image: radial-gradient(rgba(0, 0, 0, 0.22) 0.68px, transparent 0.78px);
   background-size: 7px 7px;
   backdrop-filter: saturate(0.92) brightness(0.99);
 }

@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local release artifacts kept outside git history
+release/itch build/*.exe
+release/itch build/*.blockmap

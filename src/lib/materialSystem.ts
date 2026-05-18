@@ -89,7 +89,7 @@ const MATERIAL_PRESETS: Record<MaterialPresetKey, MaterialPreset> = {
       bump: 0.18,
       coating: 0.22,
     },
-    label: 'altin',
+    label: 'gold',
     metalness: 0.96,
     roughness: 0.24,
     textureFactory: () =>
@@ -460,8 +460,8 @@ const applyUvTransform = (texture: Texture | null | undefined, surface: SurfaceS
     return
   }
 
-  const repeatX = 1 / clamp(surface.uvScaleX, 0.2, 8)
-  const repeatY = 1 / clamp(surface.uvScaleY, 0.2, 8)
+  const repeatX = 1 / Math.max(surface.uvScaleX, 0.2)
+  const repeatY = 1 / Math.max(surface.uvScaleY, 0.2)
   texture.wrapS = RepeatWrapping
   texture.wrapT = RepeatWrapping
   texture.center.set(0.5, 0.5)
@@ -479,8 +479,8 @@ const drawWrappedTexture = (
   opacity = 1,
   compositeOperation: GlobalCompositeOperation = 'source-over',
 ) => {
-  const tileWidth = canvasSize * clamp(surface.uvScaleX, 0.2, 8)
-  const tileHeight = canvasSize * clamp(surface.uvScaleY, 0.2, 8)
+  const tileWidth = canvasSize * Math.max(surface.uvScaleX, 0.2)
+  const tileHeight = canvasSize * Math.max(surface.uvScaleY, 0.2)
   const offsetX = surface.uvOffsetX * canvasSize
   const offsetY = surface.uvOffsetY * canvasSize
   const rotation = (surface.uvRotation * Math.PI) / 180
@@ -804,7 +804,11 @@ export const applySurfaceToObject = (
   surface: SurfaceState,
 ) => {
   object.traverse((child) => {
-    if (!(child instanceof Mesh) || child.userData.ngonWireOverlay) {
+    if (
+      !(child instanceof Mesh) ||
+      child.userData.ngonWireOverlay ||
+      child.userData.ngonCellOutline
+    ) {
       return
     }
 

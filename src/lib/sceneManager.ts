@@ -5,6 +5,7 @@ import {
   BufferGeometry,
   CanvasTexture,
   Color,
+  DoubleSide,
   DirectionalLight,
   EdgesGeometry,
   Float32BufferAttribute,
@@ -13,6 +14,7 @@ import {
   MOUSE,
   Mesh,
   MeshBasicMaterial,
+  MeshToonMaterial,
   NearestFilter,
   Object3D,
   PCFSoftShadowMap,
@@ -55,6 +57,8 @@ const SMOOTH_WELD_PRECISION = 3
 const MAX_UNDO_ENTRIES = 48
 const MODEL_LAYER = 1
 const TRAIL_LAYER = 2
+const lerpValue = (start: number, end: number, amount: number) =>
+  start + (end - start) * amount
 
 export type ViewLightType = 'studio' | 'sun' | 'spot'
 
@@ -91,10 +95,24 @@ export type ViewMotionBlurSettings = {
   strobe: number
 }
 
+export type ViewTurntableSettings = {
+  enabled: boolean
+  mode: 'loop' | 'pingpong'
+  speed: number
+}
+
 export type ViewImageExportOptions = {
   dpi: number
   format: 'png' | 'jpg'
   height: number
+  width: number
+}
+
+export type ViewTurntableCaptureOptions = {
+  frameCount: number
+  height: number
+  transparentBackground?: boolean
+  travelSeconds: number
   width: number
 }
 
@@ -148,6 +166,38 @@ const DEFAULT_MOTION_BLUR_SETTINGS: ViewMotionBlurSettings = {
   intensity: 0.52,
   mode: 'trail',
   strobe: 0.48,
+}
+
+const DEFAULT_TURNTABLE_SETTINGS: ViewTurntableSettings = {
+  enabled: false,
+  mode: 'loop',
+  speed: 0.28,
+}
+
+const createToonGradientTexture = () => {
+  const gradientCanvas = document.createElement('canvas')
+  gradientCanvas.width = 4
+  gradientCanvas.height = 1
+  const context = gradientCanvas.getContext('2d')
+  if (!context) {
+    return null
+  }
+
+  context.fillStyle = '#1f1f1f'
+  context.fillRect(0, 0, 1, 1)
+  context.fillStyle = '#666666'
+  context.fillRect(1, 0, 1, 1)
+  context.fillStyle = '#b7b7b7'
+  context.fillRect(2, 0, 1, 1)
+  context.fillStyle = '#ffffff'
+  context.fillRect(3, 0, 1, 1)
+
+  const texture = new CanvasTexture(gradientCanvas)
+  texture.minFilter = NearestFilter
+  texture.magFilter = NearestFilter
+  texture.generateMipmaps = false
+  texture.needsUpdate = true
+  return texture
 }
 
 const DEFAULT_BACKGROUND_GRADIENT_SETTINGS: ViewBackgroundGradientSettings = {
@@ -397,6 +447,7 @@ const cloneRenderableSnapshot = (object: Object3D) => {
   const cloned = cloneModelSnapshot(object)
   stripTaggedChildren(cloned, 'ngonWireOverlay')
   stripTaggedChildren(cloned, 'ngonMotionGhost')
+  stripTaggedChildren(cloned, 'ngonCellOutline')
   return cloned
 }
 
@@ -819,6 +870,45 @@ const setRenderableMaterialFlatShading = (material: unknown, flatShading: boolea
   }
 }
 
+const createToonMaterialFromMaterial = (material: unknown, gradientMap: CanvasTexture | null) => {
+  const source = (material ?? {}) as Record<string, unknown>
+  const toonMaterial = new MeshToonMaterial({
+    alphaMap:
+      source.alphaMap && typeof source.alphaMap === 'object'
+        ? (source.alphaMap as never)
+        : null,
+    alphaTest:
+      typeof source.alphaTest === 'number' ? source.alphaTest : 0,
+    color:
+      source.color instanceof Color ? source.color.clone() : new Color('#ffffff'),
+    map:
+      source.map && typeof source.map === 'object' ? (source.map as never) : null,
+    opacity: typeof source.opacity === 'number' ? source.opacity : 1,
+    side:
+      typeof source.side === 'number' ? (source.side as MeshToonMaterial['side']) : DoubleSide,
+    transparent: source.transparent === true || (typeof source.opacity === 'number' && source.opacity < 1),
+  })
+
+  if (source.emissive instanceof Color) {
+    toonMaterial.emissive.copy(source.emissive)
+  }
+  if (typeof source.emissiveIntensity === 'number') {
+    toonMaterial.emissiveIntensity = source.emissiveIntensity
+  }
+  if (gradientMap) {
+    toonMaterial.gradientMap = gradientMap
+  }
+
+  toonMaterial.depthWrite = source.depthWrite !== false
+  toonMaterial.depthTest = source.depthTest !== false
+  toonMaterial.toneMapped = source.toneMapped !== false
+  toonMaterial.fog = source.fog !== false
+  toonMaterial.name =
+    typeof source.name === 'string' ? `${source.name}-toon` : 'ngon-cell-toon'
+  toonMaterial.needsUpdate = true
+  return toonMaterial
+}
+
 const setGhostMaterialStyle = (material: unknown, opacity: number) => {
   if (!material || typeof material !== 'object') {
     return
@@ -951,6 +1041,39 @@ const setGhostMaterialStyle = (material: unknown, opacity: number) => {
   }
 }
 
+const createGhostTrailMaterial = (material: unknown) => {
+  if (!material || typeof material !== 'object') {
+    return material
+  }
+
+  const source = material as {
+    alphaMap?: unknown
+    color?: { clone?: () => unknown }
+    map?: unknown
+    opacity?: number
+    side?: unknown
+    transparent?: boolean
+  }
+
+  return new MeshBasicMaterial({
+    alphaMap:
+      source.alphaMap && typeof source.alphaMap === 'object'
+        ? (cloneTextureValue(source.alphaMap) as MeshBasicMaterial['alphaMap'])
+        : null,
+    color:
+      source.color && typeof source.color === 'object' && 'clone' in source.color
+        ? (source.color.clone?.() as MeshBasicMaterial['color'])
+        : '#ffffff',
+    map:
+      source.map && typeof source.map === 'object'
+        ? (cloneTextureValue(source.map) as MeshBasicMaterial['map'])
+        : null,
+    opacity: typeof source.opacity === 'number' ? source.opacity : 1,
+    side: source.side as MeshBasicMaterial['side'],
+    transparent: source.transparent ?? true,
+  })
+}
+
 const viewSnapshotEqual = (left: ViewSnapshot, right: ViewSnapshot) => {
   const epsilon = 0.00001
 
@@ -1055,6 +1178,7 @@ export class ModelViewport {
   private readonly hemiLight: HemisphereLight
   private readonly fillLight: PointLight
   private readonly fxaaPass: ShaderPass
+  private readonly toonGradientTexture: CanvasTexture | null
   private readonly renderer: WebGLRenderer
   private readonly resizeObserver: ResizeObserver
   private readonly scene: Scene
@@ -1091,9 +1215,16 @@ export class ModelViewport {
   private pendingUndoSnapshot: ViewSnapshot | null = null
   private pointerDragging = false
   private renderQueued = false
+  private lastRenderTime = 0
   private shadowEnabled = true
   private shadowSoftness = 0.45
   private smoothShadingEnabled = true
+  private cellShaderEnabled = false
+  private turntableAzimuth = 0
+  private turntableDirection = 1
+  private turntableElevation = 0
+  private turntableRadius = 8
+  private turntableSettings: ViewTurntableSettings = DEFAULT_TURNTABLE_SETTINGS
   private undoStack: ViewSnapshot[] = []
   private wireframeSettings: ViewWireframeSettings = DEFAULT_WIREFRAME_SETTINGS
 
@@ -1114,8 +1245,9 @@ export class ModelViewport {
     this.renderer.setSize(container.clientWidth, container.clientHeight, false)
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = PCFSoftShadowMap
-    this.renderer.toneMapping = ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.08
+      this.renderer.toneMapping = ACESFilmicToneMapping
+      this.renderer.toneMappingExposure = 1.08
+      this.toonGradientTexture = createToonGradientTexture()
 
     this.composer = new EffectComposer(this.renderer)
     this.baseRenderPass = new RenderPass(this.scene, this.camera)
@@ -1138,7 +1270,7 @@ export class ModelViewport {
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement)
     this.controls.enableDamping = false
-    this.controls.target.set(0, 0, 0)
+      this.controls.target.set(0, 0, 0)
     this.controls.mouseButtons.LEFT = MOUSE.ROTATE
     this.controls.mouseButtons.MIDDLE = MOUSE.PAN
     this.controls.mouseButtons.RIGHT = MOUSE.PAN
@@ -1221,7 +1353,7 @@ export class ModelViewport {
 
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(container)
-    this.requestRender()
+      this.requestRender()
   }
 
   setModel(object: Object3D, bounds: Box3) {
@@ -1254,6 +1386,7 @@ export class ModelViewport {
       this.modelFloorY = -0.001
       this.lightRadius = Math.max(MODEL_BOUNDS_SIZE.length() * 1.15, 12)
       this.rebuildWireOverlay()
+      this.applyCellShaderState()
       this.applyWireframeSettings()
       this.updateFloor()
       this.frameModel(bounds)
@@ -1265,6 +1398,7 @@ export class ModelViewport {
   applySurface(surface: SurfaceState) {
     applySurfaceToObject(this.modelRoot, surface)
     this.applySmoothShading(this.modelRoot)
+    this.applyCellShaderState()
     this.applyWireframeSettings()
     if (this.motionBlurSettings.enabled) {
       this.scheduleMotionTrailRefresh(140)
@@ -1284,6 +1418,7 @@ export class ModelViewport {
     this.modelRoot.add(restored)
     this.prepareModelForPreview(this.modelRoot)
     this.applySmoothShading(this.modelRoot)
+    this.applyCellShaderState()
     this.rebuildWireOverlay()
     this.applyWireframeSettings()
     if (this.motionBlurSettings.enabled) {
@@ -1407,6 +1542,7 @@ export class ModelViewport {
   setSmoothShadingEnabled(enabled: boolean) {
     this.smoothShadingEnabled = enabled
     this.applySmoothShading(this.modelRoot)
+    this.applyCellShaderState()
     this.rebuildWireOverlay()
     this.applyWireframeSettings()
     if (this.motionBlurSettings.enabled) {
@@ -1548,6 +1684,35 @@ export class ModelViewport {
     this.requestRender()
   }
 
+  setCellShaderEnabled(enabled: boolean) {
+    this.cellShaderEnabled = enabled
+    this.applyCellShaderState()
+    this.applyWireframeSettings()
+    if (this.motionBlurSettings.enabled) {
+      this.scheduleMotionTrailRefresh(100)
+    }
+    this.requestRender()
+  }
+
+  setTurntableSettings(settings: ViewTurntableSettings) {
+    const wasEnabled = this.turntableSettings.enabled
+    this.turntableSettings = {
+      enabled: settings.enabled,
+      mode: settings.mode,
+      speed: Math.min(Math.max(settings.speed, 0), 1),
+    }
+
+    if (this.turntableSettings.enabled && !wasEnabled) {
+      this.syncTurntableFromCamera()
+      this.turntableDirection = 1
+      this.lastRenderTime = 0
+      this.requestRender()
+      return
+    }
+
+    this.requestRender()
+  }
+
   async exportBinaryGlb(options?: { bakedMapCanvas?: HTMLCanvasElement | null }) {
     if (this.modelRoot.children.length === 0) {
       throw new Error('Export icin once model yukle.')
@@ -1603,24 +1768,96 @@ export class ModelViewport {
   }
 
   async exportPreviewImage(options: ViewImageExportOptions) {
+    const outputCanvas = await this.capturePreviewCanvas({
+      format: options.format,
+      height: options.height,
+      transparentBackground: options.format === 'png',
+      width: options.width,
+    })
+
+    const bytes = await canvasToArrayBuffer(outputCanvas, options.format)
+    return applyImageDpiMetadata(bytes, options.format, options.dpi)
+  }
+
+  async captureTurntableFrames(options: ViewTurntableCaptureOptions) {
+    const frameCount = Math.max(1, Math.round(options.frameCount))
+    const totalMs = Math.max(0, options.travelSeconds * 1000)
+
+    const savedCameraPosition = this.camera.position.clone()
+    const savedTarget = this.controls.target.clone()
+    const savedAspect = this.camera.aspect
+    const savedAzimuth = this.turntableAzimuth
+    const savedElevation = this.turntableElevation
+    const savedRadius = this.turntableRadius
+    const savedDirection = this.turntableDirection
+
+    this.syncTurntableFromCamera()
+
+    let azimuth = this.turntableAzimuth
+    let direction = this.turntableDirection
+    const elevation = this.turntableElevation
+    const radius = this.turntableRadius
+    const deltaMs = frameCount > 1 ? totalMs / (frameCount - 1) : 0
+    const frames: HTMLCanvasElement[] = []
+
+    try {
+      for (let index = 0; index < frameCount; index += 1) {
+        this.applyTurntablePose(azimuth, elevation, radius)
+        frames.push(
+          await this.capturePreviewCanvas({
+            format: 'jpg',
+            height: options.height,
+            transparentBackground: options.transparentBackground ?? false,
+            width: options.width,
+          }),
+        )
+
+        if (index < frameCount - 1) {
+          const nextState = this.advanceTurntableState(azimuth, direction, deltaMs)
+          azimuth = nextState.azimuth
+          direction = nextState.direction
+        }
+      }
+    } finally {
+      this.turntableAzimuth = savedAzimuth
+      this.turntableElevation = savedElevation
+      this.turntableRadius = savedRadius
+      this.turntableDirection = savedDirection
+      this.camera.position.copy(savedCameraPosition)
+      this.controls.target.copy(savedTarget)
+      this.camera.aspect = savedAspect
+      this.camera.updateProjectionMatrix()
+      this.controls.update()
+      this.resize()
+      this.requestRender()
+    }
+
+    return frames
+  }
+
+  private async capturePreviewCanvas(options: {
+    format: 'png' | 'jpg'
+    height: number
+    transparentBackground: boolean
+    width: number
+  }) {
     const finalWidth = Math.max(1, Math.round(options.width))
     const finalHeight = Math.max(1, Math.round(options.height))
     const renderWidth = finalWidth
     const renderHeight = finalHeight
-      const previewBackground = this.resolveBackgroundColor()
+    const previewBackground = this.resolveBackgroundColor()
 
-      this.camera.aspect = renderWidth / renderHeight
-      this.camera.updateProjectionMatrix()
-      this.syncRenderTargets(renderWidth, renderHeight, 1)
-      this.renderScene(this.composer, {
-        disablePatternBackground: options.format === 'png',
-      })
+    this.camera.aspect = renderWidth / renderHeight
+    this.camera.updateProjectionMatrix()
+    this.syncRenderTargets(renderWidth, renderHeight, 1)
+    this.renderScene(this.composer, {
+      disablePatternBackground: options.transparentBackground,
+    })
     const colorCanvas = resizeCanvas(cloneCanvas(this.renderer.domElement), finalWidth, finalHeight)
 
     try {
-      if (options.format === 'jpg') {
-        const bytes = await canvasToArrayBuffer(colorCanvas, 'jpg')
-        return applyImageDpiMetadata(bytes, 'jpg', options.dpi)
+      if (!options.transparentBackground) {
+        return colorCanvas
       }
 
       const maskRenderer = new WebGLRenderer({
@@ -1650,13 +1887,11 @@ export class ModelViewport {
         this.camera.layers.enable(TRAIL_LAYER)
         maskRenderer.render(this.scene, this.camera)
 
-        const transparentCanvas = await removeFlatBackgroundFromCanvas(
+        return removeFlatBackgroundFromCanvas(
           colorCanvas,
           previewBackground,
           resizeCanvas(cloneCanvas(maskRenderer.domElement), finalWidth, finalHeight),
         )
-        const bytes = await canvasToArrayBuffer(transparentCanvas, 'png')
-        return applyImageDpiMetadata(bytes, 'png', options.dpi)
       } finally {
         this.scene.overrideMaterial = previousOverrideMaterial
         this.scene.background = previousBackground
@@ -1668,6 +1903,42 @@ export class ModelViewport {
       this.resize()
       this.requestRender()
     }
+  }
+
+  private advanceTurntableState(
+    azimuth: number,
+    direction: number,
+    deltaMs: number,
+  ) {
+    const speedRadiansPerSecond = lerpValue(0.18, 1.85, this.turntableSettings.speed)
+    const deltaRadians = speedRadiansPerSecond * (deltaMs / 1000)
+
+    if (this.turntableSettings.mode === 'pingpong') {
+      let nextAzimuth = azimuth + deltaRadians * direction
+      let nextDirection = direction
+      if (nextAzimuth > Math.PI * 0.72) {
+        nextAzimuth = Math.PI * 0.72
+        nextDirection = -1
+      } else if (nextAzimuth < -Math.PI * 0.72) {
+        nextAzimuth = -Math.PI * 0.72
+        nextDirection = 1
+      }
+
+      return { azimuth: nextAzimuth, direction: nextDirection }
+    }
+
+    return { azimuth: azimuth + deltaRadians, direction }
+  }
+
+  private applyTurntablePose(azimuth: number, elevation: number, radius: number) {
+    const target = this.controls.target
+    const horizontalRadius = Math.cos(elevation) * radius
+    this.camera.position.set(
+      target.x + Math.cos(azimuth) * horizontalRadius,
+      target.y + Math.sin(elevation) * radius,
+      target.z + Math.sin(azimuth) * horizontalRadius,
+    )
+    this.controls.update()
   }
 
   exportObjText() {
@@ -1778,7 +2049,15 @@ export class ModelViewport {
     this.renderQueued = true
     this.animationFrameId = window.requestAnimationFrame(() => {
       this.renderQueued = false
+      const now = performance.now()
+      const deltaMs =
+        this.lastRenderTime > 0 ? Math.min(48, now - this.lastRenderTime) : 16
+      this.lastRenderTime = now
+      this.tickTurntable(deltaMs)
       this.renderScene(this.composer)
+      if (this.turntableSettings.enabled) {
+        this.requestRender()
+      }
     })
   }
 
@@ -1837,6 +2116,47 @@ export class ModelViewport {
     this.requestRender()
   }
 
+  private syncTurntableFromCamera() {
+    const offset = this.camera.position.clone().sub(this.controls.target)
+    this.turntableRadius = Math.max(offset.length(), 0.001)
+    this.turntableAzimuth = Math.atan2(offset.z, offset.x)
+    this.turntableElevation = Math.atan2(
+      offset.y,
+      Math.max(0.0001, Math.hypot(offset.x, offset.z)),
+    )
+  }
+
+  private tickTurntable(deltaMs: number) {
+    if (!this.turntableSettings.enabled) {
+      return
+    }
+
+    const speedRadiansPerSecond = lerpValue(0.18, 1.85, this.turntableSettings.speed)
+    const deltaRadians = speedRadiansPerSecond * (deltaMs / 1000)
+
+    if (this.turntableSettings.mode === 'pingpong') {
+      this.turntableAzimuth += deltaRadians * this.turntableDirection
+      if (this.turntableAzimuth > Math.PI * 0.72) {
+        this.turntableAzimuth = Math.PI * 0.72
+        this.turntableDirection = -1
+      } else if (this.turntableAzimuth < -Math.PI * 0.72) {
+        this.turntableAzimuth = -Math.PI * 0.72
+        this.turntableDirection = 1
+      }
+    } else {
+      this.turntableAzimuth += deltaRadians
+    }
+
+    const target = this.controls.target
+    const horizontalRadius = Math.cos(this.turntableElevation) * this.turntableRadius
+    this.camera.position.set(
+      target.x + Math.cos(this.turntableAzimuth) * horizontalRadius,
+      target.y + Math.sin(this.turntableElevation) * this.turntableRadius,
+      target.z + Math.sin(this.turntableAzimuth) * horizontalRadius,
+    )
+    this.controls.update()
+  }
+
   private applyBackgroundColor(disablePatternBackground = false) {
     const background = this.resolveBackgroundColor()
     this.scene.background = disablePatternBackground
@@ -1881,7 +2201,7 @@ export class ModelViewport {
     this.composer.setSize(width, height)
     this.bloomPass.setSize(width, height)
     this.modelRoot.traverse((child) => {
-      if (!child.userData.ngonWireOverlay) {
+      if (!child.userData.ngonWireOverlay && !child.userData.ngonCellOutline) {
         return
       }
 
@@ -1908,6 +2228,11 @@ export class ModelViewport {
 
   private setBaseModelVisible(visible: boolean) {
     this.modelRoot.traverse((child) => {
+      if (child.userData.ngonCellOutline) {
+        child.visible = visible && this.cellShaderEnabled
+        return
+      }
+
       if (!(child instanceof Mesh) || child.userData.ngonWireOverlay) {
         return
       }
@@ -1923,6 +2248,13 @@ export class ModelViewport {
 
   private prepareModelForPreview(object: Object3D) {
     object.traverse((child) => {
+      if (child.userData.ngonCellOutline) {
+        child.layers.set(MODEL_LAYER)
+        child.castShadow = false
+        child.receiveShadow = false
+        return
+      }
+
       if (!('castShadow' in child) || !('receiveShadow' in child)) {
         return
       }
@@ -1935,7 +2267,11 @@ export class ModelViewport {
 
   private applySmoothShading(object: Object3D) {
     object.traverse((child) => {
-      if (!(child instanceof Mesh) || child.userData.ngonWireOverlay) {
+      if (
+        !(child instanceof Mesh) ||
+        child.userData.ngonWireOverlay ||
+        child.userData.ngonCellOutline
+      ) {
         return
       }
 
@@ -1968,6 +2304,61 @@ export class ModelViewport {
         )
       } else {
         setRenderableMaterialFlatShading(material, !this.smoothShadingEnabled)
+      }
+    })
+  }
+
+  private applyCellShaderState() {
+    this.modelRoot.traverse((child) => {
+      if (!(child instanceof Mesh) || child.userData.ngonWireOverlay || child.userData.ngonCellOutline) {
+        return
+      }
+
+      const outlineChildren = child.children.filter((entry) => entry.userData.ngonCellOutline)
+      outlineChildren.forEach((outlineChild) => {
+        child.remove(outlineChild)
+        const outlineSource = outlineChild.userData.ngonCellOutlineSource as
+          | {
+              edges?: { dispose?: () => void }
+              outlineGeometry?: { dispose?: () => void }
+            }
+          | undefined
+        outlineSource?.edges?.dispose?.()
+        outlineSource?.outlineGeometry?.dispose?.()
+        const outlineMaterial = (outlineChild as Object3D & { material?: unknown }).material
+        if (Array.isArray(outlineMaterial)) {
+          outlineMaterial.forEach((entry) => entry?.dispose?.())
+        } else if (outlineMaterial && typeof outlineMaterial === 'object' && 'dispose' in outlineMaterial) {
+          ;(outlineMaterial as { dispose?: () => void }).dispose?.()
+        }
+      })
+
+      if (!this.cellShaderEnabled) {
+        const originalMaterial = child.userData.ngonCellOriginalMaterial as unknown
+        if (originalMaterial) {
+          const currentMaterial = child.material
+          if (Array.isArray(currentMaterial)) {
+            currentMaterial.forEach((entry) => entry.dispose?.())
+          } else {
+            currentMaterial.dispose?.()
+          }
+          child.material = originalMaterial as never
+          delete child.userData.ngonCellOriginalMaterial
+        }
+        return
+      }
+
+      const sourceMaterial = child.material
+      child.userData.ngonCellOriginalMaterial = sourceMaterial
+      if (Array.isArray(sourceMaterial)) {
+        child.material = sourceMaterial.map((entry) =>
+          createToonMaterialFromMaterial(entry, this.toonGradientTexture),
+        ) as never
+      } else {
+        child.material = createToonMaterialFromMaterial(
+          sourceMaterial,
+          this.toonGradientTexture,
+        ) as never
       }
     })
   }
@@ -2052,8 +2443,8 @@ export class ModelViewport {
     const backgroundHex = `#${baseColor.getHexString()}`
     const isLight = getColorLuminance(baseColor) > 0.7
     const dotColor = isLight
-      ? 'rgba(0, 0, 0, 0.28)'
-      : 'rgba(255, 255, 255, 0.22)'
+      ? 'rgba(0, 0, 0, 0.3)'
+      : 'rgba(255, 255, 255, 0.3)'
 
     if (this.backgroundGradient.enabled) {
       const gradient = context.createLinearGradient(
@@ -2073,11 +2464,22 @@ export class ModelViewport {
     context.fillRect(0, 0, canvas.width, canvas.height)
 
     if (this.backgroundGridEnabled) {
-      context.imageSmoothingEnabled = false
-      context.fillStyle = dotColor
-      for (let y = 0; y < canvas.height; y += 7) {
-        for (let x = 0; x < canvas.width; x += 7) {
-          context.fillRect(x, y, 2, 2)
+      const tile = document.createElement('canvas')
+      tile.width = 7
+      tile.height = 7
+      const tileContext = tile.getContext('2d')
+
+      if (tileContext) {
+        tileContext.clearRect(0, 0, tile.width, tile.height)
+        tileContext.fillStyle = dotColor
+        tileContext.beginPath()
+        tileContext.arc(3.5, 3.5, 0.7, 0, Math.PI * 2)
+        tileContext.fill()
+
+        const pattern = context.createPattern(tile, 'repeat')
+        if (pattern) {
+          context.fillStyle = pattern
+          context.fillRect(0, 0, canvas.width, canvas.height)
         }
       }
     }
@@ -2232,6 +2634,7 @@ export class ModelViewport {
 
     while (this.motionTrailRoot.children.length < copyCount) {
       const clone = cloneRenderableSnapshot(this.modelRoot)
+      const trailMeshes: Mesh[] = []
       clone.traverse((child) => {
         child.layers.set(TRAIL_LAYER)
         child.castShadow = false
@@ -2241,17 +2644,25 @@ export class ModelViewport {
           return
         }
 
+        trailMeshes.push(child)
         const material = child.material
         if (Array.isArray(material)) {
-          child.material = material.map((entry) => cloneMaterialValue(entry))
+          child.material = material.map((entry) =>
+            this.cellShaderEnabled
+              ? createGhostTrailMaterial(entry)
+              : cloneMaterialValue(entry),
+          )
           ;(child.material as unknown[]).forEach((entry: unknown) =>
             setRenderableMaterialVisibility(entry, true),
           )
         } else {
-          child.material = cloneMaterialValue(material)
+          child.material = this.cellShaderEnabled
+            ? createGhostTrailMaterial(material)
+            : cloneMaterialValue(material)
           setRenderableMaterialVisibility(child.material, true)
         }
       })
+      clone.userData.ngonTrailMeshes = trailMeshes
       this.motionTrailRoot.add(clone)
     }
   }
@@ -2311,12 +2722,15 @@ export class ModelViewport {
       : smearMode
       ? 0.28 + gaussianWeight * 0.18
       : 1 + gaussianWeight * 0.38
+    const cellShaderLoadFactor = this.cellShaderEnabled ? 0.58 : 1
 
-    this.ensureMotionTrailCopies(copyCount)
+    this.ensureMotionTrailCopies(Math.max(6, Math.round(copyCount * cellShaderLoadFactor)))
 
-    for (let index = 0; index < copyCount; index += 1) {
+    const activeCopyCount = this.motionTrailRoot.children.length
+
+    for (let index = 0; index < activeCopyCount; index += 1) {
       const clone = this.motionTrailRoot.children[index]
-      const linearProgress = (index + 1) / copyCount
+      const linearProgress = (index + 1) / activeCopyCount
       const progress = silhouetteMode
         ? Math.pow(linearProgress, 2.25) * 0.34
         : smearMode
@@ -2327,14 +2741,12 @@ export class ModelViewport {
         distanceScale * progress * trailSpread,
       )
 
-      clone.traverse((child) => {
+      const trailMeshes = (clone.userData.ngonTrailMeshes as Mesh[] | undefined) ?? []
+
+      trailMeshes.forEach((child) => {
         child.layers.set(TRAIL_LAYER)
         child.castShadow = false
         child.receiveShadow = false
-
-        if (!(child instanceof Mesh) || child.userData.ngonWireOverlay) {
-          return
-        }
 
         const gaussianFalloff = silhouetteMode
           ? Math.pow(1 - progress / 0.34, 1.45 + gaussianWeight * 1.2)

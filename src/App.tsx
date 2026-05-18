@@ -24,6 +24,8 @@ import {
   type ViewLightSettings,
   type ViewLightType,
   type ViewMotionBlurSettings,
+  type ViewTurntableCaptureOptions,
+  type ViewTurntableSettings,
 } from './lib/sceneManager'
 
 type ModelSummary = {
@@ -54,6 +56,13 @@ type ImageExportOptions = {
   longEdge: number
   scale: ImageExportScale | null
 }
+type TurntableCaptureExportType = 'frames' | 'gif'
+type TurntableCaptureOptions = {
+  delayMs: number
+  durationSeconds: number
+  fps: number
+  frameCount: number
+}
 type GradientDragTarget =
   | {
       endX: number
@@ -76,6 +85,11 @@ type DockDragTarget = {
   offsetX: number
   offsetY: number
   width: number
+}
+type PendingGradientStopDrag = {
+  id: string
+  startX: number
+  startY: number
 }
 
 const SUPPORTED_FORMATS = ['OBJ', 'FBX', '3DS', 'STL', 'BLEND', 'SKP']
@@ -172,6 +186,14 @@ const MOTION_MODES: Array<{
   { key: 'silhouette', label: 'silhouette' },
 ]
 
+const TURNTABLE_MODES: Array<{
+  key: ViewTurntableSettings['mode']
+  label: string
+}> = [
+  { key: 'loop', label: '360' },
+  { key: 'pingpong', label: 'pingpong' },
+]
+
 const DEFAULT_LIGHT_SETTINGS: ViewLightSettings = {
   bloom: 0,
   lift: 34,
@@ -190,6 +212,12 @@ const DEFAULT_MOTION_SETTINGS: ViewMotionBlurSettings = {
   intensity: 0.46,
   mode: 'trail',
   strobe: 0.45,
+}
+
+const DEFAULT_TURNTABLE_SETTINGS: ViewTurntableSettings = {
+  enabled: false,
+  mode: 'loop',
+  speed: 0.28,
 }
 
 const BACKGROUND_PRESETS = [
@@ -232,6 +260,21 @@ const MODEL_EXPORT_FILTERS = [
   { name: 'OBJ Model', extensions: ['obj'] },
   { name: 'GLB Model', extensions: ['glb'] },
 ]
+
+const CAPTURE_EXPORT_FILTERS: Record<
+  'frames' | 'gif',
+  Array<{ name: string; extensions: string[] }>
+> = {
+  frames: [{ name: 'ZIP Archive', extensions: ['zip'] }],
+  gif: [{ name: 'GIF Animation', extensions: ['gif'] }],
+}
+
+const DEFAULT_TURNTABLE_CAPTURE_OPTIONS: TurntableCaptureOptions = {
+  delayMs: 0,
+  durationSeconds: 3,
+  fps: 24,
+  frameCount: 72,
+}
 
 const DEFAULT_BAKE_EXPORT_OPTIONS: BakeExportOptions = {
   bakeCombined: true,
@@ -734,9 +777,13 @@ function App() {
   const [modelExportFormat, setModelExportFormat] =
     useState<ModelExportFormat>('glb')
   const [showBakeExportDialog, setShowBakeExportDialog] = useState(false)
+  const [showTurntableCaptureDialog, setShowTurntableCaptureDialog] =
+    useState(false)
   const [bakeExportOptions, setBakeExportOptions] = useState<BakeExportOptions>(
     DEFAULT_BAKE_EXPORT_OPTIONS,
   )
+  const [turntableCaptureOptions, setTurntableCaptureOptions] =
+    useState<TurntableCaptureOptions>(DEFAULT_TURNTABLE_CAPTURE_OPTIONS)
   const [liveViewerAspect, setLiveViewerAspect] = useState(16 / 9)
   const [wireColor, setWireColor] = useState('#111111')
   const [wireframeEnabled, setWireframeEnabled] = useState(false)
@@ -745,6 +792,10 @@ function App() {
   const [smoothShadingEnabled, setSmoothShadingEnabled] = useState(true)
   const [motionBlur, setMotionBlur] =
     useState<ViewMotionBlurSettings>(DEFAULT_MOTION_SETTINGS)
+  const [turntable, setTurntable] = useState<ViewTurntableSettings>(
+    DEFAULT_TURNTABLE_SETTINGS,
+  )
+  const [cellShaderEnabled, setCellShaderEnabled] = useState(false)
   const [collapsedPanels, setCollapsedPanels] =
     useState<Record<FloatingPanelKey, boolean>>(DEFAULT_COLLAPSED_PANELS)
   const [panelPositions, setPanelPositions] = useState<Record<DockPanelKey, DockPanelPosition | null>>(
@@ -753,7 +804,10 @@ function App() {
   const [panelDragTarget, setPanelDragTarget] = useState<DockDragTarget | null>(null)
   const [gradientDragTarget, setGradientDragTarget] =
     useState<GradientDragTarget | null>(null)
+  const [pendingGradientStopDrag, setPendingGradientStopDrag] =
+    useState<PendingGradientStopDrag | null>(null)
   const [viewerBounds, setViewerBounds] = useState({ height: 0, width: 0 })
+  const gradientStopPopoverRef = useRef<HTMLDivElement | null>(null)
   const presetDefaults = createPresetSurface(surface.preset)
   const lightDefaults = LIGHT_PRESETS[light.type]
   const activeFrame = FRAME_OPTIONS.find((item) => item.key === previewFramePreset) ?? null
@@ -863,6 +917,22 @@ function App() {
     mutate()
   }
 
+  const disableMotionBlurForMaterialChange = async () => {
+    if (!motionBlur.enabled) {
+      return
+    }
+
+    const nextMotion = {
+      ...motionBlur,
+      enabled: false,
+    }
+
+    await runMotionToggleTask(() => {
+      viewportRef.current?.setMotionBlurSettings(nextMotion)
+      setMotionBlur(nextMotion)
+    })
+  }
+
   useEffect(() => {
     if (!viewerHostRef.current) {
       return
@@ -959,6 +1029,10 @@ function App() {
       return
     }
 
+    if (selectedGradientStopId === null) {
+      return
+    }
+
     const matchedStop = backgroundGradient.stops.find(
       (stop) => stop.id === selectedGradientStopId,
     )
@@ -989,6 +1063,36 @@ function App() {
       requestAnimationFrame(() => finishViewerBusy())
     }
   }, [motionBlur])
+
+  useEffect(() => {
+    viewportRef.current?.setTurntableSettings(turntable)
+  }, [turntable])
+
+  useEffect(() => {
+    viewportRef.current?.setCellShaderEnabled(cellShaderEnabled)
+  }, [cellShaderEnabled])
+
+  useEffect(() => {
+    if (!selectedGradientStopId) {
+      return
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null
+      if (
+        target?.closest(
+          '.gradient-editor-stop-popover, .gradient-editor-stop, .gradient-editor-add, .gradient-editor-color',
+        )
+      ) {
+        return
+      }
+
+      setSelectedGradientStopId(null)
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown, true)
+    return () => window.removeEventListener('pointerdown', handlePointerDown, true)
+  }, [selectedGradientStopId])
 
   useEffect(() => {
     if (!gradientDragTarget) {
@@ -1078,6 +1182,36 @@ function App() {
       window.removeEventListener('pointerup', handlePointerUp)
     }
   }, [gradientDragTarget])
+
+  useEffect(() => {
+    if (!pendingGradientStopDrag) {
+      return
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const moveX = event.clientX - pendingGradientStopDrag.startX
+      const moveY = event.clientY - pendingGradientStopDrag.startY
+
+      if (Math.abs(moveX) < 4 && Math.abs(moveY) < 4) {
+        return
+      }
+
+      setGradientDragTarget({ id: pendingGradientStopDrag.id, kind: 'stop' })
+      setPendingGradientStopDrag(null)
+    }
+
+    const handlePointerUp = () => {
+      setPendingGradientStopDrag(null)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+  }, [pendingGradientStopDrag])
 
   useEffect(() => {
     if (!panelDragTarget) {
@@ -1230,6 +1364,7 @@ function App() {
   }
 
   const setPreset = async (preset: MaterialPresetKey) => {
+    await disableMotionBlurForMaterialChange()
     await runSurfaceViewerTask(() => {
       setSurface((current) => {
         const next = createPresetSurface(preset)
@@ -1261,6 +1396,16 @@ function App() {
       | 'uvRotation',
     nextValue: number,
   ) => {
+    if (
+      key !== 'uvScaleX' &&
+      key !== 'uvScaleY' &&
+      key !== 'uvOffsetX' &&
+      key !== 'uvOffsetY' &&
+      key !== 'uvRotation'
+    ) {
+      await disableMotionBlurForMaterialChange()
+    }
+
     await runSurfaceViewerTask(() => {
       setMaterialMode('custom')
       setSurface((current) => ({
@@ -1278,6 +1423,7 @@ function App() {
     key: 'diffuseColor' | 'coatingColor',
     nextValue: string,
   ) => {
+    await disableMotionBlurForMaterialChange()
     await runSurfaceViewerTask(() => {
       setMaterialMode('custom')
       setSurface((current) => ({
@@ -1288,6 +1434,7 @@ function App() {
   }
 
   const toggleFoliage = async () => {
+    await disableMotionBlurForMaterialChange()
     await runSurfaceViewerTask(() => {
       setMaterialMode('custom')
       setSurface((current) => ({
@@ -1309,6 +1456,7 @@ function App() {
   }
 
   const updateMap = async (slot: SurfaceMapSlot, texture: LoadedTextureMap | null) => {
+    await disableMotionBlurForMaterialChange()
     await runSurfaceViewerTask(() => {
       setMaterialMode('custom')
       setSurface((current) => {
@@ -1320,6 +1468,7 @@ function App() {
   }
 
   const restoreOriginal = async () => {
+    await disableMotionBlurForMaterialChange()
     beginViewerBusy(0)
     await waitForPaint()
     viewportRef.current?.restoreOriginalMaterial()
@@ -1402,6 +1551,32 @@ function App() {
 
   const toggleWireframe = () => {
     setWireframeEnabled((current) => !current)
+  }
+
+  const toggleCellShader = () => {
+    setCellShaderEnabled((current) => !current)
+  }
+
+  const toggleTurntable = () => {
+    setTurntable((current) => ({
+      ...current,
+      enabled: !current.enabled,
+    }))
+  }
+
+  const setTurntableMode = (mode: ViewTurntableSettings['mode']) => {
+    setTurntable((current) => ({
+      ...current,
+      enabled: true,
+      mode,
+    }))
+  }
+
+  const setTurntableSpeed = (speed: number) => {
+    setTurntable((current) => ({
+      ...current,
+      speed,
+    }))
   }
 
   const toggleWireframeShowModel = () => {
@@ -1491,10 +1666,6 @@ function App() {
     setBackgroundGradient(nextGradient)
     setGradientPanelOpen(true)
     setSelectedGradientStopId(nextGradient.stops[1]?.id ?? nextGradient.stops[0]?.id ?? null)
-  }
-
-  const toggleBackgroundGradientPanel = () => {
-    setGradientPanelOpen((current) => !current)
   }
 
   const setGradientStopColor = (id: string, color: string) => {
@@ -1610,9 +1781,16 @@ function App() {
     (Math.atan2(gradientDeltaY, gradientDeltaX) * 180) / Math.PI
   const gradientCss = buildGradientCss(backgroundGradient)
   const selectedGradientStop =
-    backgroundGradient.stops.find((stop) => stop.id === selectedGradientStopId) ??
-    backgroundGradient.stops[0] ??
-    null
+    selectedGradientStopId === null
+      ? null
+      : backgroundGradient.stops.find((stop) => stop.id === selectedGradientStopId) ??
+        null
+  const selectedGradientStopPoint = selectedGradientStop
+    ? {
+        x: lerp(gradientLineStart.x, gradientLineEnd.x, selectedGradientStop.position),
+        y: lerp(gradientLineStart.y, gradientLineEnd.y, selectedGradientStop.position),
+      }
+    : null
 
   const openDesktopDialog = async () => {
     const picker = window.desktopBridge?.openModelDialog
@@ -1979,6 +2157,127 @@ function App() {
     await exportPreviewImage(imageExportOptions)
   }
 
+  const exportTurntableCapture = async (
+    exportType: TurntableCaptureExportType,
+  ) => {
+    if (!viewportRef.current) {
+      return
+    }
+
+    try {
+      const baseName = summary?.name.replace(/\.[^.]+$/, '') ?? 'ngon-junk-turntable'
+      const bridge = window.desktopBridge
+      const extension = exportType === 'gif' ? 'gif' : 'zip'
+      const picked =
+        bridge
+          ? await bridge.pickExportPath({
+              defaultName: `${baseName}-turntable.${extension}`,
+              filters: [...CAPTURE_EXPORT_FILTERS[exportType]],
+              title:
+                exportType === 'gif'
+                  ? 'turntable gif export'
+                  : 'turntable frames export',
+            })
+          : null
+
+      if (bridge && !picked) {
+        updateStatus('export / canceled')
+        return
+      }
+
+      const captureConfig: ViewTurntableCaptureOptions = {
+        frameCount: Math.max(1, Math.round(turntableCaptureOptions.frameCount)),
+        height: Math.max(1, Math.round(viewerBounds.height || exportPreviewHeight)),
+        transparentBackground: false,
+        travelSeconds: Math.max(0.1, turntableCaptureOptions.durationSeconds),
+        width: Math.max(1, Math.round(viewerBounds.width || exportPreviewWidth)),
+      }
+
+      updateStatus(
+        exportType === 'gif' ? 'exporting / turntable / gif' : 'exporting / turntable / frames',
+      )
+
+      const frames = await runAsyncViewerTask(
+        () => viewportRef.current!.captureTurntableFrames(captureConfig),
+        { delayMs: 0 },
+      )
+
+      if (exportType === 'frames') {
+        const digits = Math.max(3, String(frames.length).length)
+        const zipEntries: Array<{ bytes: Uint8Array; fileName: string }> = []
+        for (let index = 0; index < frames.length; index += 1) {
+          zipEntries.push({
+            bytes: await canvasToPngBytes(frames[index]),
+            fileName: `${baseName}-frame-${String(index + 1).padStart(digits, '0')}.png`,
+          })
+        }
+        const zipBytes = createStoredZip(zipEntries)
+
+        if (picked && bridge?.writeExportBinary) {
+          await bridge.writeExportBinary(picked.filePath, zipBytes)
+          updateStatus(`saved / ${baseName}-turntable.zip`)
+          return
+        }
+
+        downloadBlob(
+          new Blob([zipBytes], { type: 'application/zip' }),
+          `${baseName}-turntable.zip`,
+        )
+        updateStatus(`saved / ${baseName}-turntable.zip`)
+        return
+      }
+
+      const { GIFEncoder, applyPalette, quantize } = await import('gifenc')
+      const gif = GIFEncoder()
+      const gifDelay = Math.max(
+        1,
+        Math.round(
+          (turntableCaptureOptions.delayMs > 0
+            ? turntableCaptureOptions.delayMs
+            : 1000 / Math.max(1, turntableCaptureOptions.fps)) / 10,
+        ),
+      )
+
+      for (const frame of frames) {
+        const context = frame.getContext('2d', { willReadFrequently: true })
+        if (!context) {
+          throw new Error('GIF frame okunamadi.')
+        }
+
+        const rgba = new Uint8Array(
+          context.getImageData(0, 0, frame.width, frame.height).data,
+        )
+        const palette = quantize(rgba, 256)
+        const indexed = applyPalette(rgba, palette)
+        gif.writeFrame(indexed, frame.width, frame.height, {
+          delay: gifDelay,
+          palette,
+        })
+      }
+
+      gif.finish()
+      const gifBytes = gif.bytes().slice()
+
+      if (picked && bridge?.writeExportBinary) {
+        await bridge.writeExportBinary(picked.filePath, gifBytes.buffer)
+        updateStatus(`saved / ${baseName}-turntable.gif`)
+        return
+      }
+
+      downloadBlob(
+        new Blob([gifBytes], { type: 'image/gif' }),
+        `${baseName}-turntable.gif`,
+      )
+      updateStatus(`saved / ${baseName}-turntable.gif`)
+    } catch (error) {
+      updateStatus(
+        `error / ${
+          error instanceof Error ? error.message : 'turntable export basarisiz'
+        }`,
+      )
+    }
+  }
+
   const onFallbackInputChange = async (
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
@@ -2192,6 +2491,107 @@ function App() {
           </section>
         </div>
       ) : null}
+      {showTurntableCaptureDialog ? (
+        <div className="modal-backdrop">
+          <section className="modal-card">
+            <div className="modal-title">turntable capture</div>
+            <div className="modal-field-row">
+              <label className="modal-field">
+                <span>frame</span>
+                <input
+                  className="value-input modal-number-input"
+                  min={1}
+                  onChange={(event) =>
+                    setTurntableCaptureOptions((current) => ({
+                      ...current,
+                      frameCount: Math.max(1, Number(event.target.value) || 1),
+                    }))
+                  }
+                  type="number"
+                  value={turntableCaptureOptions.frameCount}
+                />
+              </label>
+              <label className="modal-field">
+                <span>sure</span>
+                <input
+                  className="value-input modal-number-input"
+                  min={0.1}
+                  onChange={(event) =>
+                    setTurntableCaptureOptions((current) => ({
+                      ...current,
+                      durationSeconds: Math.max(0.1, Number(event.target.value) || 0.1),
+                    }))
+                  }
+                  step={0.1}
+                  type="number"
+                  value={turntableCaptureOptions.durationSeconds}
+                />
+              </label>
+            </div>
+            <div className="modal-field-row">
+              <label className="modal-field">
+                <span>delay ms</span>
+                <input
+                  className="value-input modal-number-input"
+                  min={0}
+                  onChange={(event) =>
+                    setTurntableCaptureOptions((current) => ({
+                      ...current,
+                      delayMs: Math.max(0, Number(event.target.value) || 0),
+                    }))
+                  }
+                  type="number"
+                  value={turntableCaptureOptions.delayMs}
+                />
+              </label>
+              <label className="modal-field">
+                <span>fps</span>
+                <input
+                  className="value-input modal-number-input"
+                  min={1}
+                  onChange={(event) =>
+                    setTurntableCaptureOptions((current) => ({
+                      ...current,
+                      fps: Math.max(1, Number(event.target.value) || 1),
+                    }))
+                  }
+                  type="number"
+                  value={turntableCaptureOptions.fps}
+                />
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button
+                className="chip"
+                onClick={() => setShowTurntableCaptureDialog(false)}
+                type="button"
+              >
+                vazgec
+              </button>
+              <button
+                className="chip"
+                onClick={() => {
+                  setShowTurntableCaptureDialog(false)
+                  void exportTurntableCapture('frames')
+                }}
+                type="button"
+              >
+                export frames to zip
+              </button>
+              <button
+                className="ui-button modal-confirm"
+                onClick={() => {
+                  setShowTurntableCaptureDialog(false)
+                  void exportTurntableCapture('gif')
+                }}
+                type="button"
+              >
+                export gif
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
       <main className="app-shell">
       <aside className="sidebar">
         <header className="topline">
@@ -2258,6 +2658,16 @@ function App() {
                 {getPresetLabel(preset)}
               </button>
             ))}
+          </div>
+          <div className="toggle-row">
+            <span>cell shader</span>
+            <button
+              className={`chip ${cellShaderEnabled ? 'chip-active' : ''}`}
+              onClick={toggleCellShader}
+              type="button"
+            >
+              {cellShaderEnabled ? 'on' : 'off'}
+            </button>
           </div>
         </section>
 
@@ -2402,12 +2812,20 @@ function App() {
             {backgroundGridEnabled ? <div className="viewer-grid-overlay" /> : null}
             {backgroundGradient.enabled && gradientPanelOpen ? (
               <>
-                <div className="gradient-editor-overlay">
+                <div
+                  className="gradient-editor-overlay"
+                  onPointerDown={(event) => {
+                    if (event.target === event.currentTarget) {
+                      setSelectedGradientStopId(null)
+                    }
+                  }}
+                >
                   <div
                     className="gradient-editor-line"
                     onPointerDown={(event) => {
                       event.preventDefault()
                       event.stopPropagation()
+                      setSelectedGradientStopId(null)
                       setGradientDragTarget({
                         endX: backgroundGradient.endX,
                         endY: backgroundGradient.endY,
@@ -2430,6 +2848,7 @@ function App() {
                     onPointerDown={(event) => {
                       event.preventDefault()
                       event.stopPropagation()
+                      setSelectedGradientStopId(null)
                       setGradientDragTarget({ kind: 'start' })
                     }}
                     style={{
@@ -2443,6 +2862,7 @@ function App() {
                     onClick={(event) => {
                       event.preventDefault()
                       event.stopPropagation()
+                      setSelectedGradientStopId(null)
                       addGradientStopAtEdge('start')
                     }}
                     style={{
@@ -2458,6 +2878,7 @@ function App() {
                     onPointerDown={(event) => {
                       event.preventDefault()
                       event.stopPropagation()
+                      setSelectedGradientStopId(null)
                       setGradientDragTarget({ kind: 'end' })
                     }}
                     style={{
@@ -2471,6 +2892,7 @@ function App() {
                     onClick={(event) => {
                       event.preventDefault()
                       event.stopPropagation()
+                      setSelectedGradientStopId(null)
                       addGradientStopAtEdge('end')
                     }}
                     style={{
@@ -2487,13 +2909,28 @@ function App() {
 
                     return (
                       <button
-                        className="gradient-editor-handle gradient-editor-stop"
+                        className={`gradient-editor-handle gradient-editor-stop ${
+                          selectedGradientStopId === stop.id
+                            ? 'gradient-editor-stop-selected'
+                            : ''
+                        }`}
                         key={stop.id}
+                        onClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          setSelectedGradientStopId(stop.id)
+                          setGradientPanelOpen(true)
+                        }}
                         onPointerDown={(event) => {
                           event.preventDefault()
                           event.stopPropagation()
                           setSelectedGradientStopId(stop.id)
-                          setGradientDragTarget({ id: stop.id, kind: 'stop' })
+                          setGradientPanelOpen(true)
+                          setPendingGradientStopDrag({
+                            id: stop.id,
+                            startX: event.clientX,
+                            startY: event.clientY,
+                          })
                         }}
                         style={{
                           background: gradientStopToCss(stop),
@@ -2504,6 +2941,60 @@ function App() {
                       />
                     )
                   })}
+                  {selectedGradientStop && selectedGradientStopPoint ? (
+                    <div
+                      className="gradient-editor-stop-popover"
+                      ref={gradientStopPopoverRef}
+                      style={{
+                        left: selectedGradientStopPoint.x,
+                        top: selectedGradientStopPoint.y,
+                      }}
+                    >
+                      <div className="gradient-editor-stop-popover-row">
+                        <input
+                          className="gradient-editor-color"
+                          onChange={(event) =>
+                            setGradientStopColor(
+                              selectedGradientStop.id,
+                              event.target.value,
+                            )
+                          }
+                          type="color"
+                          value={selectedGradientStop.color}
+                        />
+                        <span className="gradient-editor-label">color</span>
+                      </div>
+                      <div className="gradient-editor-stop-popover-row">
+                        <span className="gradient-editor-label">alpha</span>
+                        <input
+                          className="value-input"
+                          max={100}
+                          min={0}
+                          onChange={(event) => {
+                            const nextValue = Number(event.target.value)
+                            if (Number.isNaN(nextValue)) {
+                              return
+                            }
+
+                            setGradientStopAlpha(
+                              selectedGradientStop.id,
+                              nextValue / 100,
+                            )
+                          }}
+                          step={1}
+                          type="number"
+                          value={Math.round(selectedGradientStop.alpha * 100)}
+                        />
+                      </div>
+                      <button
+                        className="chip gradient-editor-remove"
+                        onClick={() => removeGradientStop(selectedGradientStop.id)}
+                        type="button"
+                      >
+                        remove color
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               </>
             ) : null}
@@ -2520,31 +3011,44 @@ function App() {
           data-dock-key="frame"
           style={getDockPanelStyle('frame')}
         >
-          <button
-            className="chip frame-dock-reset-chip"
-            onClick={resetDockLayout}
-            type="button"
-          >
-            dock
-          </button>
           <div
-            className="frame-panel-drag-strip panel-drag-handle"
-            onPointerDown={(event) => beginDockPanelDrag(event, 'frame')}
-          />
-          {FRAME_OPTIONS.map((item) => (
+            className="frame-panel-row"
+            style={{
+              alignItems: 'center',
+              display: 'inline-flex',
+              flexDirection: 'row',
+              flexWrap: 'nowrap',
+              gap: 8,
+              justifyContent: 'center',
+              whiteSpace: 'nowrap',
+            }}
+          >
             <button
-              key={item.key}
-              className={`chip ${previewFramePreset === item.key ? 'chip-active' : ''}`}
-              onClick={() =>
-                setPreviewFramePreset((current) =>
-                  current === item.key ? null : item.key,
-                )
-              }
+              className="chip frame-dock-reset-chip"
+              onClick={resetDockLayout}
               type="button"
             >
-              {item.label}
+              dock
             </button>
-          ))}
+            <div
+              className="frame-panel-drag-strip panel-drag-handle"
+              onPointerDown={(event) => beginDockPanelDrag(event, 'frame')}
+            />
+            {FRAME_OPTIONS.map((item) => (
+              <button
+                key={item.key}
+                className={`chip ${previewFramePreset === item.key ? 'chip-active' : ''}`}
+                onClick={() =>
+                  setPreviewFramePreset((current) =>
+                    current === item.key ? null : item.key,
+                  )
+                }
+                type="button"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
         </section>
 
         <section
@@ -2622,6 +3126,52 @@ function App() {
                   {antialiasEnabled ? 'on' : 'off'}
                 </button>
               </div>
+              <div className="toggle-row">
+                <span>turntable</span>
+                <button
+                  className={`chip ${turntable.enabled ? 'chip-active' : ''}`}
+                  onClick={toggleTurntable}
+                  type="button"
+                >
+                  {turntable.enabled ? 'on' : 'off'}
+                </button>
+              </div>
+              {turntable.enabled ? (
+                <>
+                  <div className="toggle-row">
+                    <span>capture</span>
+                    <button
+                      className="chip"
+                      onClick={() => setShowTurntableCaptureDialog(true)}
+                      type="button"
+                    >
+                      capture gif
+                    </button>
+                  </div>
+                  <div className="motion-mode-grid">
+                    {TURNTABLE_MODES.map((item) => (
+                      <button
+                        key={item.key}
+                        className={`chip ${turntable.mode === item.key ? 'chip-active' : ''}`}
+                        onClick={() => setTurntableMode(item.key)}
+                        type="button"
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                  <SliderField
+                    decimals={2}
+                    defaultValue={DEFAULT_TURNTABLE_SETTINGS.speed}
+                    label="turn speed"
+                    max={1}
+                    min={0}
+                    onChange={setTurntableSpeed}
+                    step={0.01}
+                    value={turntable.speed}
+                  />
+                </>
+              ) : null}
             </>
           ) : null}
         </section>
@@ -2838,23 +3388,40 @@ function App() {
                     <div className="gradient-editor-strip" style={{ backgroundImage: gradientCss }} />
                     {selectedGradientStop ? (
                       <div className="gradient-editor-rows">
-                        <div className="gradient-editor-row gradient-editor-row-stop">
-                          <button
-                            className="gradient-editor-stop-preview"
-                            onClick={() => setSelectedGradientStopId(selectedGradientStop.id)}
-                            style={{
-                              background: gradientStopToCss(selectedGradientStop),
-                            }}
-                            type="button"
-                          />
-                          <input
-                            className="gradient-editor-color"
-                            onChange={(event) =>
-                              setGradientStopColor(selectedGradientStop.id, event.target.value)
-                            }
-                            type="color"
-                            value={selectedGradientStop.color}
-                          />
+                        <div className="gradient-editor-row gradient-editor-row-color">
+                          <span className="gradient-editor-label">color</span>
+                          <div className="gradient-editor-inline-tools">
+                            <input
+                              className="gradient-editor-color"
+                              onChange={(event) =>
+                                setGradientStopColor(
+                                  selectedGradientStop.id,
+                                  event.target.value,
+                                )
+                              }
+                              type="color"
+                              value={selectedGradientStop.color}
+                            />
+                            <input
+                              className="value-input"
+                              max={100}
+                              min={0}
+                              onChange={(event) => {
+                                const nextValue = Number(event.target.value)
+                                if (Number.isNaN(nextValue)) {
+                                  return
+                                }
+
+                                setGradientStopAlpha(
+                                  selectedGradientStop.id,
+                                  nextValue / 100,
+                                )
+                              }}
+                              step={1}
+                              type="number"
+                              value={Math.round(selectedGradientStop.alpha * 100)}
+                            />
+                          </div>
                         </div>
                         <div className="gradient-editor-row">
                           <span className="gradient-editor-label">pos</span>
@@ -2873,25 +3440,6 @@ function App() {
                             step={1}
                             type="number"
                             value={Math.round(selectedGradientStop.position * 100)}
-                          />
-                        </div>
-                        <div className="gradient-editor-row">
-                          <span className="gradient-editor-label">alpha</span>
-                          <input
-                            className="value-input"
-                            max={100}
-                            min={0}
-                            onChange={(event) => {
-                              const nextValue = Number(event.target.value)
-                              if (Number.isNaN(nextValue)) {
-                                return
-                              }
-
-                              setGradientStopAlpha(selectedGradientStop.id, nextValue / 100)
-                            }}
-                            step={1}
-                            type="number"
-                            value={Math.round(selectedGradientStop.alpha * 100)}
                           />
                         </div>
                         <button
@@ -2914,15 +3462,6 @@ function App() {
                     type="button"
                   >
                     gradient
-                  </button>
-                  <button
-                    className={`chip viewer-export-chip viewer-gradient-toggle ${
-                      gradientPanelOpen && backgroundGradient.enabled ? 'chip-active' : ''
-                    }`}
-                    onClick={toggleBackgroundGradientPanel}
-                    type="button"
-                  >
-                    {gradientPanelOpen && backgroundGradient.enabled ? '-' : '+'}
                   </button>
                 </div>
               </div>
