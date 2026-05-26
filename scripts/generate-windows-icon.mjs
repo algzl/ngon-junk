@@ -1,93 +1,165 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { inflateSync } from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const rootDir = path.resolve(__dirname, '..')
-const svgPath = path.join(rootDir, 'public', 'favicon.svg')
+const logoPath = path.join(rootDir, 'public', 'ngonlogos.png')
 const outputPath = path.join(rootDir, 'build', 'icons', 'icon.ico')
 const sizes = [16, 24, 32, 48, 64, 128, 256]
-const fill = { r: 0xe3, g: 0x1b, b: 0x23, a: 0xff }
+const pngSignature = '89504e470d0a1a0a'
 
-const parseNumber = (source, state) => {
-  while (state.index < source.length && /[\s,]/.test(source[state.index])) {
-    state.index += 1
+const colorTypeChannels = new Map([
+  [0, 1],
+  [2, 3],
+  [4, 2],
+  [6, 4],
+])
+
+const paethPredictor = (a, b, c) => {
+  const p = a + b - c
+  const pa = Math.abs(p - a)
+  const pb = Math.abs(p - b)
+  const pc = Math.abs(p - c)
+
+  if (pa <= pb && pa <= pc) {
+    return a
   }
 
-  const start = state.index
-  while (state.index < source.length && /[-+0-9.eE]/.test(source[state.index])) {
-    state.index += 1
-  }
-
-  if (start === state.index) {
-    throw new Error(`Expected number near ${source.slice(state.index, state.index + 12)}`)
-  }
-
-  return Number(source.slice(start, state.index))
+  return pb <= pc ? b : c
 }
 
-const pathToPolygon = (pathData) => {
-  const points = []
-  const state = { command: '', index: 0, x: 0, y: 0 }
+const parsePng = (buffer) => {
+  if (buffer.subarray(0, 8).toString('hex') !== pngSignature) {
+    throw new Error('Logo source must be a PNG file.')
+  }
 
-  while (state.index < pathData.length) {
-    while (state.index < pathData.length && /[\s,]/.test(pathData[state.index])) {
-      state.index += 1
-    }
+  let offset = 8
+  let width = 0
+  let height = 0
+  let bitDepth = 0
+  let colorType = 0
+  const idatChunks = []
 
-    const char = pathData[state.index]
-    if (!char) {
-      break
-    }
+  while (offset < buffer.length) {
+    const length = buffer.readUInt32BE(offset)
+    const type = buffer.subarray(offset + 4, offset + 8).toString('ascii')
+    const data = buffer.subarray(offset + 8, offset + 8 + length)
+    offset += 12 + length
 
-    if (/[A-Za-z]/.test(char)) {
-      state.command = char
-      state.index += 1
-    }
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0)
+      height = data.readUInt32BE(4)
+      bitDepth = data[8]
+      colorType = data[9]
+      const interlace = data[12]
 
-    if (state.command === 'M' || state.command === 'L') {
-      state.x = parseNumber(pathData, state)
-      state.y = parseNumber(pathData, state)
-      points.push([state.x, state.y])
-      if (state.command === 'M') {
-        state.command = 'L'
+      if (bitDepth !== 8 || interlace !== 0 || !colorTypeChannels.has(colorType)) {
+        throw new Error(`Unsupported PNG format: bitDepth=${bitDepth}, colorType=${colorType}, interlace=${interlace}`)
       }
-    } else if (state.command === 'H') {
-      state.x = parseNumber(pathData, state)
-      points.push([state.x, state.y])
-    } else if (state.command === 'V') {
-      state.y = parseNumber(pathData, state)
-      points.push([state.x, state.y])
-    } else if (state.command === 'Z' || state.command === 'z') {
+    } else if (type === 'IDAT') {
+      idatChunks.push(data)
+    } else if (type === 'IEND') {
       break
-    } else {
-      throw new Error(`Unsupported SVG path command: ${state.command}`)
     }
   }
 
-  return points
-}
-
-const containsPoint = (polygon, x, y) => {
-  let inside = false
-
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
-    const [xi, yi] = polygon[i]
-    const [xj, yj] = polygon[j]
-    const intersects =
-      yi > y !== yj > y &&
-      x < ((xj - xi) * (y - yi)) / (yj - yi || Number.EPSILON) + xi
-
-    if (intersects) {
-      inside = !inside
-    }
+  if (!width || !height || idatChunks.length === 0) {
+    throw new Error('Could not read PNG dimensions or image data.')
   }
 
-  return inside
+  const channels = colorTypeChannels.get(colorType)
+  const stride = width * channels
+  const inflated = inflateSync(Buffer.concat(idatChunks))
+  const rgba = Buffer.alloc(width * height * 4)
+  let sourceOffset = 0
+  let previous = Buffer.alloc(stride)
+
+  for (let y = 0; y < height; y += 1) {
+    const filter = inflated[sourceOffset]
+    sourceOffset += 1
+
+    const scanline = Buffer.from(inflated.subarray(sourceOffset, sourceOffset + stride))
+    sourceOffset += stride
+
+    for (let x = 0; x < stride; x += 1) {
+      const left = x >= channels ? scanline[x - channels] : 0
+      const up = previous[x] ?? 0
+      const upLeft = x >= channels ? previous[x - channels] : 0
+
+      if (filter === 1) {
+        scanline[x] = (scanline[x] + left) & 0xff
+      } else if (filter === 2) {
+        scanline[x] = (scanline[x] + up) & 0xff
+      } else if (filter === 3) {
+        scanline[x] = (scanline[x] + Math.floor((left + up) / 2)) & 0xff
+      } else if (filter === 4) {
+        scanline[x] = (scanline[x] + paethPredictor(left, up, upLeft)) & 0xff
+      } else if (filter !== 0) {
+        throw new Error(`Unsupported PNG filter: ${filter}`)
+      }
+    }
+
+    for (let x = 0; x < width; x += 1) {
+      const sourcePixel = x * channels
+      const targetPixel = (y * width + x) * 4
+
+      if (colorType === 0) {
+        const value = scanline[sourcePixel]
+        rgba[targetPixel] = value
+        rgba[targetPixel + 1] = value
+        rgba[targetPixel + 2] = value
+        rgba[targetPixel + 3] = 0xff
+      } else if (colorType === 2) {
+        rgba[targetPixel] = scanline[sourcePixel]
+        rgba[targetPixel + 1] = scanline[sourcePixel + 1]
+        rgba[targetPixel + 2] = scanline[sourcePixel + 2]
+        rgba[targetPixel + 3] = 0xff
+      } else if (colorType === 4) {
+        const value = scanline[sourcePixel]
+        rgba[targetPixel] = value
+        rgba[targetPixel + 1] = value
+        rgba[targetPixel + 2] = value
+        rgba[targetPixel + 3] = scanline[sourcePixel + 1]
+      } else {
+        rgba[targetPixel] = scanline[sourcePixel]
+        rgba[targetPixel + 1] = scanline[sourcePixel + 1]
+        rgba[targetPixel + 2] = scanline[sourcePixel + 2]
+        rgba[targetPixel + 3] = scanline[sourcePixel + 3]
+      }
+    }
+
+    previous = scanline
+  }
+
+  return { width, height, pixels: rgba }
 }
 
-const renderDib = (polygon, sourceWidth, sourceHeight, size) => {
+const sampleBilinear = (source, x, y) => {
+  const x0 = Math.max(0, Math.min(source.width - 1, Math.floor(x)))
+  const y0 = Math.max(0, Math.min(source.height - 1, Math.floor(y)))
+  const x1 = Math.max(0, Math.min(source.width - 1, x0 + 1))
+  const y1 = Math.max(0, Math.min(source.height - 1, y0 + 1))
+  const tx = x - x0
+  const ty = y - y0
+  const values = [0, 0, 0, 0]
+
+  for (let channel = 0; channel < 4; channel += 1) {
+    const topLeft = source.pixels[(y0 * source.width + x0) * 4 + channel]
+    const topRight = source.pixels[(y0 * source.width + x1) * 4 + channel]
+    const bottomLeft = source.pixels[(y1 * source.width + x0) * 4 + channel]
+    const bottomRight = source.pixels[(y1 * source.width + x1) * 4 + channel]
+    const top = topLeft * (1 - tx) + topRight * tx
+    const bottom = bottomLeft * (1 - tx) + bottomRight * tx
+    values[channel] = Math.round(top * (1 - ty) + bottom * ty)
+  }
+
+  return values
+}
+
+const renderDib = (source, size) => {
   const headerSize = 40
   const pixelBytes = size * size * 4
   const maskStride = Math.ceil(size / 32) * 4
@@ -106,23 +178,18 @@ const renderDib = (polygon, sourceWidth, sourceHeight, size) => {
   dib.writeUInt32LE(0, 32)
   dib.writeUInt32LE(0, 36)
 
-  const scale = Math.min((size - 2) / sourceWidth, (size - 2) / sourceHeight)
-  const offsetX = (size - sourceWidth * scale) / 2
-  const offsetY = (size - sourceHeight * scale) / 2
-
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
-      const sourceX = (x + 0.5 - offsetX) / scale
-      const sourceY = (y + 0.5 - offsetY) / scale
+      const sourceX = ((x + 0.5) / size) * source.width - 0.5
+      const sourceY = ((y + 0.5) / size) * source.height - 0.5
+      const [r, g, b, a] = sampleBilinear(source, sourceX, sourceY)
       const bottomUpY = size - 1 - y
       const pixelOffset = headerSize + (bottomUpY * size + x) * 4
 
-      if (containsPoint(polygon, sourceX, sourceY)) {
-        dib[pixelOffset] = fill.b
-        dib[pixelOffset + 1] = fill.g
-        dib[pixelOffset + 2] = fill.r
-        dib[pixelOffset + 3] = fill.a
-      }
+      dib[pixelOffset] = b
+      dib[pixelOffset + 1] = g
+      dib[pixelOffset + 2] = r
+      dib[pixelOffset + 3] = a
     }
   }
 
@@ -158,18 +225,9 @@ const createIco = (images) => {
   return ico
 }
 
-const svg = await readFile(svgPath, 'utf8')
-const pathData = svg.match(/<path[^>]+d="([^"]+)"/)?.[1]
-const viewBox = svg.match(/viewBox="([^"]+)"/)?.[1]?.split(/\s+/).map(Number)
-
-if (!pathData || !viewBox || viewBox.length !== 4) {
-  throw new Error('Could not read favicon SVG path or viewBox.')
-}
-
-const polygon = pathToPolygon(pathData)
-const [, , sourceWidth, sourceHeight] = viewBox
+const source = parsePng(await readFile(logoPath))
 const images = sizes.map((size) => ({
-  bytes: renderDib(polygon, sourceWidth, sourceHeight, size),
+  bytes: renderDib(source, size),
   size,
 }))
 

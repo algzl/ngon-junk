@@ -15,6 +15,7 @@ Export reliability and release metadata refresh.
 - Fixed large binary desktop exports by writing Electron export payloads in chunks before finalizing the target file.
 - Restored the missing `gifenc` dependency used by turntable GIF export.
 - Corrected GitHub and release download URLs in AI/SEO metadata.
+- Rebuilt web and Windows app icons from the official raster `ngonlogos.png` logo.
 
 ### Notes
 

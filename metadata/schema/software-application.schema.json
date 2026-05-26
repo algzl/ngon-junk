@@ -20,6 +20,7 @@
   },
   "softwareVersion": "1.1.1",
   "url": "https://ycswu.co/ngon-junk/",
+  "image": "https://ycswu.co/ngon-junk/ngonlogos.png",
   "downloadUrl": "https://github.com/aliguzel996/ngon-junk/releases/latest/download/ngon-junk-1.1.1-latest.exe",
   "installUrl": "https://github.com/aliguzel996/ngon-junk/releases/latest/download/ngon-junk-setup-1.1.1.exe",
   "codeRepository": "https://github.com/aliguzel996/ngon-junk",
@@ -36,5 +37,5 @@
     "GIF",
     "ZIP"
   ],
-  "dateModified": "2026-05-26"
+  "dateModified": "2026-05-27"
 }
