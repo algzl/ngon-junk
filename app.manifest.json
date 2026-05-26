@@ -1,0 +1,84 @@
+{
+  "id": "ngon-junk",
+  "name": "ngon-junk",
+  "version": "1.1.1",
+  "shortDescription": "Lightweight desktop 3D look-dev tool for model preview, material testing, UV tweaks, image/model export and turntable capture.",
+  "aiDescription": "ngon-junk is a free open-source creative utility for fast 3D model preview, material look development and reliable export passes without a heavy production suite.",
+  "category": "CreativeTool",
+  "creator": "Ali Guzel",
+  "publisher": "YCSWU",
+  "license": "Open source",
+  "website": "https://ycswu.co/ngon-junk/",
+  "github": "https://github.com/aliguzel996/ngon-junk",
+  "releaseApiUrl": "https://api.github.com/repos/aliguzel996/ngon-junk/releases/latest",
+  "latestReleaseUrl": "https://github.com/aliguzel996/ngon-junk/releases/latest",
+  "downloadUrls": {
+    "windows": "https://github.com/aliguzel996/ngon-junk/releases/latest/download/ngon-junk-1.1.1-latest.exe",
+    "setup": "https://github.com/aliguzel996/ngon-junk/releases/latest/download/ngon-junk-setup-1.1.1.exe",
+    "mac": "",
+    "linux": ""
+  },
+  "releaseFiles": {
+    "webDeployFolder": "release/web app",
+    "windowsPortable": "release/windows app/ngon-junk-1.1.1-latest.exe",
+    "itchSetup": "release/itch build/ngon-junk-setup-1.1.1.exe"
+  },
+  "keywords": [
+    "ngon-junk",
+    "YCSWU",
+    "3D preview",
+    "material testing",
+    "model export"
+  ],
+  "useCases": [
+    "3D model preview",
+    "material look development",
+    "UV and texture checks",
+    "image export",
+    "GLB/OBJ export",
+    "turntable GIF or frame export"
+  ],
+  "notFor": [
+    "full 3D modeling",
+    "rigging",
+    "animation production"
+  ],
+  "inputFormats": [
+    "OBJ",
+    "FBX",
+    "3DS",
+    "STL",
+    "BLEND",
+    "SKP"
+  ],
+  "outputFormats": [
+    "GLB",
+    "OBJ",
+    "JPG",
+    "PNG",
+    "GIF",
+    "ZIP"
+  ],
+  "systemRequirements": [
+    "Windows 10 or newer recommended"
+  ],
+  "changelog": [
+    {
+      "version": "1.1.1",
+      "date": "2026-05-26",
+      "changes": [
+        "Improved large binary export writes by chunking Electron IPC payloads.",
+        "Added close-time export confirmation with model, image and turntable options.",
+        "Restored GIF export dependency and metadata for YCSWU Tools Hub."
+      ]
+    },
+    {
+      "version": "1.1.0",
+      "date": "2026-04-26",
+      "changes": [
+        "Sample flow and export preview refresh."
+      ]
+    }
+  ],
+  "updatedAt": "2026-05-26"
+}

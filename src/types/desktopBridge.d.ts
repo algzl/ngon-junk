@@ -39,9 +39,11 @@ declare global {
       ) => Promise<DesktopExportPathResult | null>
       writeExportBinary: (
         filePath: string,
-        bytes: ArrayBuffer,
+        bytes: ArrayBuffer | ArrayBufferView,
       ) => Promise<string | null>
       writeExportText: (filePath: string, text: string) => Promise<string | null>
+      onCloseRequest: (callback: () => void) => () => void
+      closeWindow: () => Promise<boolean>
     }
   }
 }

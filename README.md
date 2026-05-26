@@ -5,8 +5,10 @@ The app is built with `Electron + React + TypeScript + Three.js`. Its renderer c
 
 ## Version
 
-- Current version: `v1.1.0`
-- Portable Windows build: generate with `npm run dist:win`
+- Current version: `v1.1.1`
+- Web deploy build: generate with `npm run build:web`
+- Portable Windows build: generate with `npm run pack:windows`
+- Itch/setup build: generate with `npm run pack:itch`
 
 ## Quick Start
 
@@ -17,16 +19,21 @@ npm run dev
 
 ```bash
 npm run build
-npm run dist:win
+npm run build:web
+npm run pack:windows
+npm run pack:itch
 ```
 
 ## Current Limits
 
 - Import supports `OBJ`, `FBX`, `3DS`, `STL`, `BLEND`, `SKP`.
 - Model export currently supports `GLB` and `OBJ`.
+- Image export supports `JPG` and `PNG`.
+- Turntable export supports `GIF` and zipped frame sequences.
 - `FBX` export is not included in the current build.
 - Bake export does not include `bloom` or `shadow`.
 - Reflection can be baked into generated maps for export.
+- Desktop close prompts can export selected model, image and turntable outputs before quitting.
 
 ## Türkçe
 

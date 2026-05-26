@@ -1,0 +1,30 @@
+{
+  "appId": "com.ngonjunk.desktop",
+  "productName": "ngon-junk",
+  "asar": true,
+  "directories": {
+    "output": "release/itch build"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "package.json"
+  ],
+  "win": {
+    "signAndEditExecutable": false,
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "artifactName": "ngon-junk-setup-${version}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "perMachine": false
+  }
+}

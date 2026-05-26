@@ -1,0 +1,40 @@
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "ngon-junk",
+  "description": "Lightweight desktop 3D look-dev tool for model preview, material testing, UV tweaks, image/model export and turntable capture.",
+  "applicationCategory": "CreativeTool",
+  "operatingSystem": "Windows",
+  "creator": {
+    "@type": "Person",
+    "name": "Ali Guzel"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "YCSWU"
+  },
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "softwareVersion": "1.1.1",
+  "url": "https://ycswu.co/ngon-junk/",
+  "downloadUrl": "https://github.com/aliguzel996/ngon-junk/releases/latest/download/ngon-junk-1.1.1-latest.exe",
+  "installUrl": "https://github.com/aliguzel996/ngon-junk/releases/latest/download/ngon-junk-setup-1.1.1.exe",
+  "codeRepository": "https://github.com/aliguzel996/ngon-junk",
+  "fileFormat": [
+    "OBJ",
+    "FBX",
+    "3DS",
+    "STL",
+    "BLEND",
+    "SKP",
+    "GLB",
+    "JPG",
+    "PNG",
+    "GIF",
+    "ZIP"
+  ],
+  "dateModified": "2026-05-26"
+}

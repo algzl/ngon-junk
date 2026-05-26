@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.1.1 - 2026-05-26
+
+Export reliability and release metadata refresh.
+
+### Added
+
+- Added close-time export confirmation with model, image, turntable frames and GIF options.
+- Added dedicated release scripts for `release/web app`, `release/windows app` and local `release/itch build`.
+- Added YCSWU Tools Hub metadata files and schema context for catalog/update integration.
+
+### Fixed
+
+- Fixed large binary desktop exports by writing Electron export payloads in chunks before finalizing the target file.
+- Restored the missing `gifenc` dependency used by turntable GIF export.
+- Corrected GitHub and release download URLs in AI/SEO metadata.
+
+### Notes
+
+- The setup/itch executable remains a local release artifact and is ignored by Git to avoid GitHub large-file rejection.
+
 ## v1.1.0 - 2026-04-26
 
 UI and sample-flow update for the first public post-release refresh of `ngon-junk`.

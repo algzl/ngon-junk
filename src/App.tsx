@@ -63,6 +63,12 @@ type TurntableCaptureOptions = {
   fps: number
   frameCount: number
 }
+type CloseExportSelection = {
+  image: boolean
+  model: boolean
+  turntableFrames: boolean
+  turntableGif: boolean
+}
 type GradientDragTarget =
   | {
       endX: number
@@ -287,6 +293,13 @@ const DEFAULT_IMAGE_EXPORT_OPTIONS: ImageExportOptions = {
   dpi: 72,
   longEdge: 1600,
   scale: null,
+}
+
+const DEFAULT_CLOSE_EXPORT_SELECTION: CloseExportSelection = {
+  image: false,
+  model: false,
+  turntableFrames: false,
+  turntableGif: false,
 }
 const DEFAULT_BACKGROUND_GRADIENT_SETTINGS: ViewBackgroundGradientSettings = {
   enabled: false,
@@ -779,6 +792,10 @@ function App() {
   const [showBakeExportDialog, setShowBakeExportDialog] = useState(false)
   const [showTurntableCaptureDialog, setShowTurntableCaptureDialog] =
     useState(false)
+  const [showCloseExportDialog, setShowCloseExportDialog] = useState(false)
+  const [closeExportSelection, setCloseExportSelection] =
+    useState<CloseExportSelection>(DEFAULT_CLOSE_EXPORT_SELECTION)
+  const [isCloseExporting, setIsCloseExporting] = useState(false)
   const [bakeExportOptions, setBakeExportOptions] = useState<BakeExportOptions>(
     DEFAULT_BAKE_EXPORT_OPTIONS,
   )
@@ -1016,32 +1033,6 @@ function App() {
   useEffect(() => {
     viewportRef.current?.setBackgroundGradient(backgroundGradient)
   }, [backgroundGradient])
-
-  useEffect(() => {
-    if (!backgroundGradient.enabled && gradientPanelOpen) {
-      setGradientPanelOpen(false)
-    }
-  }, [backgroundGradient.enabled, gradientPanelOpen])
-
-  useEffect(() => {
-    if (!backgroundGradient.stops.length) {
-      setSelectedGradientStopId(null)
-      return
-    }
-
-    if (selectedGradientStopId === null) {
-      return
-    }
-
-    const matchedStop = backgroundGradient.stops.find(
-      (stop) => stop.id === selectedGradientStopId,
-    )
-    if (matchedStop) {
-      return
-    }
-
-    setSelectedGradientStopId(backgroundGradient.stops[0].id)
-  }, [backgroundGradient.stops, selectedGradientStopId])
 
   useEffect(() => {
     viewportRef.current?.setAntialiasEnabled(antialiasEnabled)
@@ -1814,7 +1805,7 @@ function App() {
 
   const runModelExport = async (bakeOptions?: BakeExportOptions) => {
     if (!viewportRef.current) {
-      return
+      return false
     }
 
     try {
@@ -1877,7 +1868,7 @@ function App() {
 
       if (bridge && !picked) {
         updateStatus('export / canceled')
-        return
+        return false
       }
 
       if (bakeOptions && useBakeFlow) {
@@ -1958,24 +1949,24 @@ function App() {
           if (picked && bridge?.writeExportBinary) {
             await bridge.writeExportBinary(picked.filePath, zipBytes)
             updateStatus(`saved / ${baseName}-bake.zip`)
-            return
+            return true
           }
 
           downloadBlob(new Blob([zipBytes], { type: 'application/zip' }), `${baseName}-bake.zip`)
           updateStatus(`saved / ${baseName}-bake.zip`)
-          return
+          return true
         }
 
         const text = viewportRef.current.exportObjText()
         if (picked && bridge?.writeExportText) {
           await bridge.writeExportText(picked.filePath, text)
           updateStatus(`saved / ${baseName}.obj`)
-          return
+          return true
         }
 
         downloadBlob(new Blob([text], { type: 'text/plain;charset=utf-8' }), `${baseName}.obj`)
         updateStatus(`saved / ${baseName}.obj`)
-        return
+        return true
       }
 
       if (useBakeFlow && bakeOptions?.deliveryMode === 'separate') {
@@ -2006,12 +1997,12 @@ function App() {
           if (picked && bridge?.writeExportBinary) {
             await bridge.writeExportBinary(picked.filePath, zipBytes)
             updateStatus(`saved / ${baseName}-bake.zip`)
-            return
+            return true
           }
 
           downloadBlob(new Blob([zipBytes], { type: 'application/zip' }), `${baseName}-bake.zip`)
           updateStatus(`saved / ${baseName}-bake.zip`)
-          return
+          return true
         }
 
       const embeddedBakeCanvas =
@@ -2029,15 +2020,17 @@ function App() {
       if (picked && bridge?.writeExportBinary) {
         await bridge.writeExportBinary(picked.filePath, bytes)
         updateStatus(`saved / ${baseName}.glb`)
-        return
+        return true
       }
 
       downloadBlob(new Blob([bytes], { type: 'model/gltf-binary' }), `${baseName}.glb`)
       updateStatus(`saved / ${baseName}.glb`)
+      return true
     } catch (error) {
       updateStatus(
         `error / ${error instanceof Error ? error.message : 'export basarisiz'}`,
       )
+      return false
     }
     }
 
@@ -2047,10 +2040,10 @@ function App() {
       materialMode === 'custom'
     ) {
       setShowBakeExportDialog(true)
-      return
+      return false
     }
 
-    await runModelExport()
+    return runModelExport()
   }
 
   const toggleBakeExportOption = (key: keyof BakeExportOptions) => {
@@ -2082,7 +2075,7 @@ function App() {
 
   const exportPreviewImage = async (options: ImageExportOptions = imageExportOptions) => {
     if (!viewportRef.current) {
-      return
+      return false
     }
 
     try {
@@ -2102,7 +2095,7 @@ function App() {
 
       if (bridge && !picked) {
         updateStatus('export / canceled')
-        return
+        return false
       }
 
       const targetLongEdge = Math.min(
@@ -2135,7 +2128,7 @@ function App() {
       if (picked && bridge?.writeExportBinary) {
         await bridge.writeExportBinary(picked.filePath, bytes)
         updateStatus(`saved / ${baseName}-preview.${format}`)
-        return
+        return true
       }
 
       downloadBlob(
@@ -2143,12 +2136,14 @@ function App() {
         `${baseName}-preview.${format}`,
       )
       updateStatus(`saved / ${baseName}-preview.${format}`)
+      return true
     } catch (error) {
       updateStatus(
         `error / ${
           error instanceof Error ? error.message : 'image export basarisiz'
         }`,
       )
+      return false
     }
   }
 
@@ -2161,7 +2156,7 @@ function App() {
     exportType: TurntableCaptureExportType,
   ) => {
     if (!viewportRef.current) {
-      return
+      return false
     }
 
     try {
@@ -2182,7 +2177,7 @@ function App() {
 
       if (bridge && !picked) {
         updateStatus('export / canceled')
-        return
+        return false
       }
 
       const captureConfig: ViewTurntableCaptureOptions = {
@@ -2216,7 +2211,7 @@ function App() {
         if (picked && bridge?.writeExportBinary) {
           await bridge.writeExportBinary(picked.filePath, zipBytes)
           updateStatus(`saved / ${baseName}-turntable.zip`)
-          return
+          return true
         }
 
         downloadBlob(
@@ -2224,7 +2219,7 @@ function App() {
           `${baseName}-turntable.zip`,
         )
         updateStatus(`saved / ${baseName}-turntable.zip`)
-        return
+        return true
       }
 
       const { GIFEncoder, applyPalette, quantize } = await import('gifenc')
@@ -2261,7 +2256,7 @@ function App() {
       if (picked && bridge?.writeExportBinary) {
         await bridge.writeExportBinary(picked.filePath, gifBytes.buffer)
         updateStatus(`saved / ${baseName}-turntable.gif`)
-        return
+        return true
       }
 
       downloadBlob(
@@ -2269,14 +2264,97 @@ function App() {
         `${baseName}-turntable.gif`,
       )
       updateStatus(`saved / ${baseName}-turntable.gif`)
+      return true
     } catch (error) {
       updateStatus(
         `error / ${
           error instanceof Error ? error.message : 'turntable export basarisiz'
         }`,
       )
+      return false
     }
   }
+
+  const toggleCloseExportSelection = (key: keyof CloseExportSelection) => {
+    setCloseExportSelection((current) => ({
+      ...current,
+      [key]: !current[key],
+    }))
+  }
+
+  const requestCloseWindow = async () => {
+    setShowCloseExportDialog(false)
+    setIsCloseExporting(false)
+    await window.desktopBridge?.closeWindow()
+  }
+
+  const cancelCloseWindow = () => {
+    setShowCloseExportDialog(false)
+    setIsCloseExporting(false)
+    updateStatus('close / canceled')
+  }
+
+  const exportSelectedAndClose = async () => {
+    if (!summary) {
+      await requestCloseWindow()
+      return
+    }
+
+    const exportTasks: Array<() => Promise<boolean>> = []
+
+    if (closeExportSelection.model) {
+      exportTasks.push(() =>
+        runModelExport(materialMode === 'custom' ? bakeExportOptions : undefined),
+      )
+    }
+
+    if (closeExportSelection.image) {
+      exportTasks.push(() => exportPreviewImage(imageExportOptions))
+    }
+
+    if (closeExportSelection.turntableFrames) {
+      exportTasks.push(() => exportTurntableCapture('frames'))
+    }
+
+    if (closeExportSelection.turntableGif) {
+      exportTasks.push(() => exportTurntableCapture('gif'))
+    }
+
+    if (exportTasks.length === 0) {
+      await requestCloseWindow()
+      return
+    }
+
+    setIsCloseExporting(true)
+
+    for (const runExportTask of exportTasks) {
+      const exported = await runExportTask()
+      if (!exported) {
+        setIsCloseExporting(false)
+        updateStatus('close / export stopped')
+        return
+      }
+    }
+
+    await requestCloseWindow()
+  }
+
+  useEffect(() => {
+    const unsubscribe = window.desktopBridge?.onCloseRequest?.(() => {
+      setShowImageExportDialog(false)
+      setShowBakeExportDialog(false)
+      setShowTurntableCaptureDialog(false)
+      setCloseExportSelection({
+        ...DEFAULT_CLOSE_EXPORT_SELECTION,
+        model: Boolean(summary),
+      })
+      setIsCloseExporting(false)
+      setShowCloseExportDialog(true)
+      updateStatus('close / save?')
+    })
+
+    return unsubscribe
+  }, [summary])
 
   const onFallbackInputChange = async (
     event: React.ChangeEvent<HTMLInputElement>,
@@ -2341,6 +2419,173 @@ function App() {
 
   return (
     <>
+      {showCloseExportDialog ? (
+        <div className="modal-backdrop">
+          <section className="modal-card modal-card-wide close-export-modal">
+            <div className="modal-title">kapatirken kaydedilsin mi?</div>
+            <div className="modal-copy modal-copy-tight">
+              <span>{summary ? summary.name : 'aktif model yok'}</span>
+            </div>
+            <div className="close-export-panel">
+              <div className="modal-subtitle">model</div>
+              <div className="close-export-row">
+                <label className="modal-option">
+                  <input
+                    checked={closeExportSelection.model}
+                    disabled={!summary || isCloseExporting}
+                    onChange={() => toggleCloseExportSelection('model')}
+                    type="checkbox"
+                  />
+                  <span>model export</span>
+                </label>
+                <div className="modal-chip-row">
+                  {MODEL_EXPORT_OPTIONS.map((item) => (
+                    <button
+                      key={item.key}
+                      className={`chip ${
+                        modelExportFormat === item.key ? 'chip-active' : ''
+                      }`}
+                      disabled={isCloseExporting}
+                      onClick={() => setModelExportFormat(item.key)}
+                      type="button"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {materialMode === 'custom' && closeExportSelection.model ? (
+                <div className="close-export-bake">
+                  <div className="modal-chip-row">
+                    <button
+                      className={`chip ${
+                        bakeExportOptions.deliveryMode === 'embedded'
+                          ? 'chip-active'
+                          : ''
+                      }`}
+                      disabled={isCloseExporting}
+                      onClick={() => setBakeDeliveryMode('embedded')}
+                      type="button"
+                    >
+                      embedded
+                    </button>
+                    <button
+                      className={`chip ${
+                        bakeExportOptions.deliveryMode === 'separate'
+                          ? 'chip-active'
+                          : ''
+                      }`}
+                      disabled={isCloseExporting}
+                      onClick={() => setBakeDeliveryMode('separate')}
+                      type="button"
+                    >
+                      separate zip
+                    </button>
+                  </div>
+                  <div className="modal-options">
+                    <label className="modal-option">
+                      <input
+                        checked={bakeExportOptions.bakeCombined}
+                        disabled={isCloseExporting}
+                        onChange={() => toggleBakeExportOption('bakeCombined')}
+                        type="checkbox"
+                      />
+                      <span>combined map</span>
+                    </label>
+                    <label className="modal-option">
+                      <input
+                        checked={bakeExportOptions.bakeDiffuseLike}
+                        disabled={isCloseExporting}
+                        onChange={() => toggleBakeExportOption('bakeDiffuseLike')}
+                        type="checkbox"
+                      />
+                      <span>base map</span>
+                    </label>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="close-export-panel">
+              <div className="modal-subtitle">image</div>
+              <div className="close-export-row">
+                <label className="modal-option">
+                  <input
+                    checked={closeExportSelection.image}
+                    disabled={!summary || isCloseExporting}
+                    onChange={() => toggleCloseExportSelection('image')}
+                    type="checkbox"
+                  />
+                  <span>preview export</span>
+                </label>
+                <div className="modal-chip-row">
+                  {IMAGE_EXPORT_OPTIONS.map((item) => (
+                    <button
+                      key={item.key}
+                      className={`chip ${
+                        imageExportFormat === item.key ? 'chip-active' : ''
+                      }`}
+                      disabled={isCloseExporting}
+                      onClick={() => setImageExportFormat(item.key)}
+                      type="button"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="close-export-panel">
+              <div className="modal-subtitle">turntable</div>
+              <div className="modal-options modal-options-inline">
+                <label className="modal-option">
+                  <input
+                    checked={closeExportSelection.turntableFrames}
+                    disabled={!summary || isCloseExporting}
+                    onChange={() => toggleCloseExportSelection('turntableFrames')}
+                    type="checkbox"
+                  />
+                  <span>frames zip</span>
+                </label>
+                <label className="modal-option">
+                  <input
+                    checked={closeExportSelection.turntableGif}
+                    disabled={!summary || isCloseExporting}
+                    onChange={() => toggleCloseExportSelection('turntableGif')}
+                    type="checkbox"
+                  />
+                  <span>gif</span>
+                </label>
+              </div>
+            </div>
+            <div className="modal-actions close-export-actions">
+              <button
+                className="chip"
+                disabled={isCloseExporting}
+                onClick={cancelCloseWindow}
+                type="button"
+              >
+                vazgec
+              </button>
+              <button
+                className="chip"
+                disabled={isCloseExporting}
+                onClick={() => void requestCloseWindow()}
+                type="button"
+              >
+                hayir, kapat
+              </button>
+              <button
+                className="ui-button modal-confirm"
+                disabled={isCloseExporting}
+                onClick={() => void exportSelectedAndClose()}
+                type="button"
+              >
+                {isCloseExporting ? 'exporting' : 'export et ve kapat'}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
       {showImageExportDialog ? (
         <div className="modal-backdrop">
           <section className="modal-card">

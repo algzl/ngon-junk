@@ -1,0 +1,25 @@
+{
+  "appId": "com.ngonjunk.desktop",
+  "productName": "ngon-junk",
+  "asar": true,
+  "directories": {
+    "output": "release/windows app"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "package.json"
+  ],
+  "win": {
+    "signAndEditExecutable": false,
+    "target": [
+      {
+        "target": "portable",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "artifactName": "ngon-junk-${version}.${ext}"
+  }
+}

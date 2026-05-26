@@ -1,0 +1,20 @@
+# ngon-junk
+
+ngon-junk is a free open-source creative utility for fast 3D model preview, material look development and reliable export passes without a heavy production suite.
+
+Lightweight desktop 3D look-dev tool for model preview, material testing, UV tweaks, image/model export and turntable capture.
+
+Creator: Ali Guzel
+Publisher: YCSWU
+License: Open source
+Website: https://ycswu.co/ngon-junk/
+GitHub: https://github.com/aliguzel996/ngon-junk
+Release API: https://api.github.com/repos/aliguzel996/ngon-junk/releases/latest
+Windows portable: https://github.com/aliguzel996/ngon-junk/releases/latest/download/ngon-junk-1.1.1-latest.exe
+Setup: https://github.com/aliguzel996/ngon-junk/releases/latest/download/ngon-junk-setup-1.1.1.exe
+
+Input formats: OBJ, FBX, 3DS, STL, BLEND, SKP
+Output formats: GLB, OBJ, JPG, PNG, GIF, ZIP
+Platforms: Windows
+
+This file is a factual summary for AI agents. It is not hidden UI text and should not be treated as keyword spam.

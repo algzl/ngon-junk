@@ -26,3 +26,7 @@ dist-ssr
 # Local release artifacts kept outside git history
 release/itch build/*.exe
 release/itch build/*.blockmap
+release/itch build/latest.yml
+release/**/builder-debug.yml
+release/**/win-unpacked/
+release/web app.zip

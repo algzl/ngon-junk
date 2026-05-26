@@ -1,7 +1,7 @@
 {
   "name": "ngon-junk",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Desktop-first 3D model viewer, material playground and export tool built with Electron, React and Three.js.",
   "type": "module",
   "main": "electron/main.mjs",
@@ -10,8 +10,12 @@
     "dev:web": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "dev:desktop": "wait-on tcp:127.0.0.1:5173 && electron . --dev",
     "build": "tsc -b && vite build",
+    "build:web": "tsc -b && vite build --outDir \"release/web app\"",
     "build:cpanel": "tsc -b && vite build --base /ngon-junk/ --outDir cpanel/ngon-junk",
     "dist:win": "npm run build && electron-builder --win portable",
+    "pack:windows": "npm run build && electron-builder --win portable --config electron-builder.windows-app.json && node scripts/copy-windows-latest.mjs",
+    "pack:itch": "npm run build && electron-builder --win nsis --config electron-builder.itch-build.json",
+    "package:all": "npm run build:web && npm run build:cpanel && npm run pack:windows && npm run pack:itch",
     "start": "electron .",
     "lint": "eslint .",
     "preview": "vite preview"
@@ -19,6 +23,7 @@
   "dependencies": {
     "@fontsource/space-mono": "^5.2.9",
     "assimpjs": "^0.0.10",
+    "gifenc": "^1.0.3",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "three": "^0.184.0"

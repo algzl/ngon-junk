@@ -1,0 +1,1 @@
+var e=``+new URL(`assimpjs-DizCuFSz.wasm`,import.meta.url).href;export{e as default};
