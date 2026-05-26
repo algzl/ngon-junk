@@ -9,12 +9,13 @@
     "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:desktop\"",
     "dev:web": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "dev:desktop": "wait-on tcp:127.0.0.1:5173 && electron . --dev",
+    "build:icon": "node scripts/generate-windows-icon.mjs",
     "build": "tsc -b && vite build",
     "build:web": "tsc -b && vite build --outDir \"release/web app\"",
     "build:cpanel": "tsc -b && vite build --base /ngon-junk/ --outDir cpanel/ngon-junk",
     "dist:win": "npm run build && electron-builder --win portable",
-    "pack:windows": "npm run build && electron-builder --win portable --config electron-builder.windows-app.json && node scripts/copy-windows-latest.mjs",
-    "pack:itch": "npm run build && electron-builder --win nsis --config electron-builder.itch-build.json",
+    "pack:windows": "npm run build:icon && npm run build && electron-builder --win portable --config electron-builder.windows-app.json && node scripts/copy-windows-latest.mjs",
+    "pack:itch": "npm run build:icon && npm run build && electron-builder --win nsis --config electron-builder.itch-build.json",
     "package:all": "npm run build:web && npm run build:cpanel && npm run pack:windows && npm run pack:itch",
     "start": "electron .",
     "lint": "eslint .",
@@ -61,7 +62,8 @@
       "package.json"
     ],
     "win": {
-      "signAndEditExecutable": false,
+      "icon": "build/icons/icon.ico",
+      "signAndEditExecutable": true,
       "target": [
         {
           "target": "portable",

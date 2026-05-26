@@ -11,7 +11,8 @@
     "package.json"
   ],
   "win": {
-    "signAndEditExecutable": false,
+    "icon": "build/icons/icon.ico",
+    "signAndEditExecutable": true,
     "target": [
       {
         "target": "nsis",
