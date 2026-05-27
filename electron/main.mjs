@@ -7,6 +7,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const isDev = process.argv.includes('--dev')
 const closeAllowedWindows = new WeakSet()
+const closeRequestFallbackTimers = new WeakMap()
 const binaryExportSessions = new Map()
 
 const createExportSessionId = () =>
@@ -64,6 +65,22 @@ const writeBinaryExportFile = async (filePath, bytes) => {
   }
 }
 
+const clearCloseRequestFallback = (window) => {
+  const timer = closeRequestFallbackTimers.get(window)
+  if (!timer) {
+    return
+  }
+
+  clearTimeout(timer)
+  closeRequestFallbackTimers.delete(window)
+}
+
+const allowWindowClose = (window) => {
+  clearCloseRequestFallback(window)
+  closeAllowedWindows.add(window)
+  window.close()
+}
+
 const createWindow = async () => {
   const window = new BrowserWindow({
     title: 'ngon-junk',
@@ -87,6 +104,35 @@ const createWindow = async () => {
 
     event.preventDefault()
     window.webContents.send('app:close-requested')
+    clearCloseRequestFallback(window)
+
+    const fallbackTimer = setTimeout(async () => {
+      closeRequestFallbackTimers.delete(window)
+
+      if (window.isDestroyed()) {
+        return
+      }
+
+      const { response } = await dialog.showMessageBox(window, {
+        type: 'question',
+        buttons: ['kapat', 'vazgec'],
+        defaultId: 0,
+        cancelId: 1,
+        message: 'ngon-junk kapatilsin mi?',
+        detail:
+          'Kapatma paneli yanit vermedi. Kaydetmeden cikmak icin kapat secenegini kullan.',
+      })
+
+      if (response === 0 && !window.isDestroyed()) {
+        allowWindowClose(window)
+      }
+    }, 2000)
+
+    closeRequestFallbackTimers.set(window, fallbackTimer)
+  })
+
+  window.on('closed', () => {
+    clearCloseRequestFallback(window)
   })
 
   if (isDev) {
@@ -135,8 +181,17 @@ ipcMain.handle('app:close-now', (event) => {
     return false
   }
 
-  closeAllowedWindows.add(window)
-  window.close()
+  allowWindowClose(window)
+  return true
+})
+
+ipcMain.handle('app:close-request-visible', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window) {
+    return false
+  }
+
+  clearCloseRequestFallback(window)
   return true
 })
 

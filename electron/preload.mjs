@@ -57,7 +57,10 @@ contextBridge.exposeInMainWorld('desktopBridge', {
   writeExportText: (filePath, text) =>
     ipcRenderer.invoke('export:write-text', { filePath, text }),
   onCloseRequest: (callback) => {
-    const listener = () => callback()
+    const listener = () => {
+      ipcRenderer.invoke('app:close-request-visible').catch(() => null)
+      callback()
+    }
     ipcRenderer.on('app:close-requested', listener)
     return () => ipcRenderer.removeListener('app:close-requested', listener)
   },

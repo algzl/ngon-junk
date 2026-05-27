@@ -825,6 +825,8 @@ function App() {
     useState<PendingGradientStopDrag | null>(null)
   const [viewerBounds, setViewerBounds] = useState({ height: 0, width: 0 })
   const gradientStopPopoverRef = useRef<HTMLDivElement | null>(null)
+  const summaryRef = useRef<ModelSummary | null>(null)
+  const closeExportDialogRef = useRef(false)
   const presetDefaults = createPresetSurface(surface.preset)
   const lightDefaults = LIGHT_PRESETS[light.type]
   const activeFrame = FRAME_OPTIONS.find((item) => item.key === previewFramePreset) ?? null
@@ -2283,12 +2285,14 @@ function App() {
   }
 
   const requestCloseWindow = async () => {
+    closeExportDialogRef.current = false
     setShowCloseExportDialog(false)
     setIsCloseExporting(false)
     await window.desktopBridge?.closeWindow()
   }
 
   const cancelCloseWindow = () => {
+    closeExportDialogRef.current = false
     setShowCloseExportDialog(false)
     setIsCloseExporting(false)
     updateStatus('close / canceled')
@@ -2340,21 +2344,36 @@ function App() {
   }
 
   useEffect(() => {
+    summaryRef.current = summary
+  }, [summary])
+
+  useEffect(() => {
+    closeExportDialogRef.current = showCloseExportDialog
+  }, [showCloseExportDialog])
+
+  useEffect(() => {
     const unsubscribe = window.desktopBridge?.onCloseRequest?.(() => {
+      const activeSummary = summaryRef.current
+
+      if (closeExportDialogRef.current) {
+        return
+      }
+
       setShowImageExportDialog(false)
       setShowBakeExportDialog(false)
       setShowTurntableCaptureDialog(false)
       setCloseExportSelection({
         ...DEFAULT_CLOSE_EXPORT_SELECTION,
-        model: Boolean(summary),
+        model: Boolean(activeSummary),
       })
       setIsCloseExporting(false)
+      closeExportDialogRef.current = true
       setShowCloseExportDialog(true)
       updateStatus('close / save?')
     })
 
     return unsubscribe
-  }, [summary])
+  }, [])
 
   const onFallbackInputChange = async (
     event: React.ChangeEvent<HTMLInputElement>,
