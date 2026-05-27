@@ -1,1 +1,0 @@
-var e=`/ngon-junk/assets/assimpjs-DizCuFSz.wasm`;export{e as default};

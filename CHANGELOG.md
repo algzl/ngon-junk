@@ -9,6 +9,7 @@ Export reliability and release metadata refresh.
 - Added close-time export confirmation with model, image, turntable frames and GIF options.
 - Added dedicated release scripts for `release/web app`, `release/windows app` and local `release/itch build`.
 - Added YCSWU Tools Hub metadata files and schema context for catalog/update integration.
+- Treated `release/web app` as the single web deploy folder for cPanel upload.
 
 ### Fixed
 
