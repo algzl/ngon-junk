@@ -19,6 +19,8 @@ Export reliability and release metadata refresh.
 - Restored the missing `gifenc` dependency used by turntable GIF export.
 - Corrected GitHub and release download URLs in AI/SEO metadata.
 - Rebuilt web and Windows app icons from the official raster `ngonlogos.png` logo.
+- Isolated background image blur to the selected layer and balanced multi-image tile layout.
+- Clarified the floating background panel add button as `+bg img`.
 
 ### Notes
 

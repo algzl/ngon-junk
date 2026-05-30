@@ -2530,10 +2530,20 @@ export class ModelViewport {
     context.fillRect(0, 0, canvas.width, canvas.height)
 
     if (this.hasBackgroundImage()) {
-      this.backgroundImage.layers.forEach((layer) => {
-        if (layer.image) {
-          this.drawBackgroundImage(context, canvas, layer)
+      const imageLayers = this.backgroundImage.layers.filter((layer) => layer.image)
+      const tileLayers = imageLayers.filter((layer) => layer.mode === 'tile')
+      let distributedTilesDrawn = false
+
+      imageLayers.forEach((layer) => {
+        if (layer.mode === 'tile' && tileLayers.length > 1) {
+          if (!distributedTilesDrawn) {
+            this.drawDistributedBackgroundTiles(context, canvas, tileLayers)
+            distributedTilesDrawn = true
+          }
+          return
         }
+
+        this.drawBackgroundImage(context, canvas, layer)
       })
     }
 
@@ -2565,6 +2575,137 @@ export class ModelViewport {
     this.backgroundPatternTexture = texture
     this.backgroundPatternKey = key
     return texture
+  }
+
+  private drawFilteredImage(
+    context: CanvasRenderingContext2D,
+    canvas: HTMLCanvasElement,
+    image: HTMLImageElement,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    blur: number,
+  ) {
+    if (blur <= 0) {
+      context.drawImage(image, x, y, width, height)
+      return
+    }
+
+    const layerCanvas = document.createElement('canvas')
+    layerCanvas.width = canvas.width
+    layerCanvas.height = canvas.height
+    const layerContext = layerCanvas.getContext('2d')
+
+    if (!layerContext) {
+      return
+    }
+
+    layerContext.save()
+    layerContext.filter = `blur(${blur}px)`
+    layerContext.drawImage(image, x, y, width, height)
+    layerContext.restore()
+
+    context.drawImage(layerCanvas, 0, 0)
+  }
+
+  private drawDistributedBackgroundTiles(
+    context: CanvasRenderingContext2D,
+    canvas: HTMLCanvasElement,
+    layers: ViewBackgroundImageLayerSettings[],
+  ) {
+    const tileLayers = layers.filter((layer) => {
+      const image = layer.image
+      return Boolean(
+        image &&
+          (image.naturalWidth || image.width) &&
+          (image.naturalHeight || image.height),
+      )
+    })
+
+    if (!tileLayers.length) {
+      return
+    }
+
+    const columns = Math.max(
+      1,
+      Math.ceil(Math.sqrt(tileLayers.length * (canvas.width / canvas.height))),
+    )
+    const rows = Math.max(1, Math.ceil(tileLayers.length / columns))
+    const averageScaleU =
+      tileLayers.reduce((sum, layer) => sum + Math.max(0.05, layer.scaleU), 0) /
+      tileLayers.length
+    const averageScaleV =
+      tileLayers.reduce((sum, layer) => sum + Math.max(0.05, layer.scaleV), 0) /
+      tileLayers.length
+    const cellWidth = Math.max(
+      24,
+      Math.round((canvas.width / columns) * averageScaleU),
+    )
+    const cellHeight = Math.max(
+      24,
+      Math.round((canvas.height / rows) * averageScaleV),
+    )
+    const tile = document.createElement('canvas')
+    tile.width = Math.max(1, cellWidth * columns)
+    tile.height = Math.max(1, cellHeight * rows)
+    const tileContext = tile.getContext('2d')
+
+    if (!tileContext) {
+      return
+    }
+
+    tileLayers.forEach((layer, index) => {
+      const image = layer.image
+
+      if (!image) {
+        return
+      }
+
+      const imageWidth = image.naturalWidth || image.width
+      const imageHeight = image.naturalHeight || image.height
+
+      if (!imageWidth || !imageHeight) {
+        return
+      }
+
+      const column = index % columns
+      const row = Math.floor(index / columns)
+      const cellX = column * cellWidth
+      const cellY = row * cellHeight
+      const baseScale = Math.max(cellWidth / imageWidth, cellHeight / imageHeight)
+      const drawWidth = imageWidth * baseScale
+      const drawHeight = imageHeight * baseScale
+      const drawX = cellX + (cellWidth - drawWidth) / 2 + layer.offsetU * cellWidth
+      const drawY = cellY + (cellHeight - drawHeight) / 2 + layer.offsetV * cellHeight
+
+      tileContext.save()
+      tileContext.beginPath()
+      tileContext.rect(cellX, cellY, cellWidth, cellHeight)
+      tileContext.clip()
+      this.drawFilteredImage(
+        tileContext,
+        tile,
+        image,
+        drawX,
+        drawY,
+        drawWidth,
+        drawHeight,
+        Math.max(0, layer.blur),
+      )
+      tileContext.restore()
+    })
+
+    const pattern = context.createPattern(tile, 'repeat')
+
+    if (!pattern) {
+      return
+    }
+
+    context.save()
+    context.fillStyle = pattern
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.restore()
   }
 
   private drawBackgroundImage(
@@ -2604,8 +2745,16 @@ export class ModelViewport {
         return
       }
 
-      tileContext.filter = blur > 0 ? `blur(${blur}px)` : 'none'
-      tileContext.drawImage(image, 0, 0, tileWidth, tileHeight)
+      this.drawFilteredImage(
+        tileContext,
+        tile,
+        image,
+        0,
+        0,
+        tileWidth,
+        tileHeight,
+        blur,
+      )
       const pattern = context.createPattern(tile, 'repeat')
 
       if (!pattern) {
@@ -2626,8 +2775,16 @@ export class ModelViewport {
     const drawX = (canvas.width - drawWidth) / 2 + offsetX
     const drawY = (canvas.height - drawHeight) / 2 + offsetY
     context.save()
-    context.filter = blur > 0 ? `blur(${blur}px)` : 'none'
-    context.drawImage(image, drawX, drawY, drawWidth, drawHeight)
+    this.drawFilteredImage(
+      context,
+      canvas,
+      image,
+      drawX,
+      drawY,
+      drawWidth,
+      drawHeight,
+      blur,
+    )
     context.restore()
   }
 

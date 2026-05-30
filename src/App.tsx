@@ -4121,7 +4121,7 @@ function App() {
                       onClick={() => backgroundImageInputRef.current?.click()}
                       type="button"
                     >
-                      bg img
+                      +bg img
                     </button>
                   </div>
                   <div className="background-image-modes">
