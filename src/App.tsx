@@ -19,6 +19,8 @@ import {
 import { loadModelFile, type ViewerFileSource } from './lib/modelLoader'
 import {
   ModelViewport,
+  type ViewBackgroundImageMode,
+  type ViewBackgroundImageSettings,
   type ViewBackgroundGradientStop,
   type ViewBackgroundGradientSettings,
   type ViewLightSettings,
@@ -68,6 +70,10 @@ type CloseExportSelection = {
   model: boolean
   turntableFrames: boolean
   turntableGif: boolean
+}
+type BackgroundImageState = ViewBackgroundImageSettings & {
+  name: string
+  sourceUrl: string | null
 }
 type GradientDragTarget =
   | {
@@ -313,6 +319,35 @@ const DEFAULT_BACKGROUND_GRADIENT_SETTINGS: ViewBackgroundGradientSettings = {
     { alpha: 1, color: '#982525', id: 'end', position: 0.96 },
   ],
 }
+
+const DEFAULT_BACKGROUND_IMAGE_SETTINGS: BackgroundImageState = {
+  enabled: false,
+  image: null,
+  mode: 'cover',
+  name: '',
+  offsetU: 0,
+  offsetV: 0,
+  scaleU: 1,
+  scaleV: 1,
+  sourceKey: '',
+  sourceUrl: null,
+}
+
+const BACKGROUND_IMAGE_ACCEPT = 'image/png,.png'
+const BACKGROUND_IMAGE_SLIDERS: Array<{
+  decimals?: number
+  defaultValue: number
+  key: 'offsetU' | 'offsetV' | 'scaleU' | 'scaleV'
+  label: string
+  max: number
+  min: number
+  step: number
+}> = [
+  { defaultValue: 1, key: 'scaleU', label: 'u', max: 8, min: 0.05, step: 0.01 },
+  { defaultValue: 1, key: 'scaleV', label: 'v', max: 8, min: 0.05, step: 0.01 },
+  { defaultValue: 0, key: 'offsetU', label: 'x', max: 2, min: -2, step: 0.01 },
+  { defaultValue: 0, key: 'offsetV', label: 'y', max: 2, min: -2, step: 0.01 },
+]
 
 const MAX_IMAGE_EXPORT_LONG_EDGE = 8192
 
@@ -741,6 +776,7 @@ function App() {
   const viewerPanelRef = useRef<HTMLElement | null>(null)
   const viewerHostRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const backgroundImageInputRef = useRef<HTMLInputElement | null>(null)
   const viewportRef = useRef<ModelViewport | null>(null)
   const imageInputRefs = useRef<Record<SurfaceMapSlot, HTMLInputElement | null>>({
     diffuse: null,
@@ -765,6 +801,17 @@ function App() {
   const [backgroundGridEnabled, setBackgroundGridEnabled] = useState(false)
   const [backgroundGradient, setBackgroundGradient] =
     useState<ViewBackgroundGradientSettings>(DEFAULT_BACKGROUND_GRADIENT_SETTINGS)
+  const [backgroundImage, setBackgroundImage] = useState<BackgroundImageState>(
+    DEFAULT_BACKGROUND_IMAGE_SETTINGS,
+  )
+  const [backgroundImageEditEnabled, setBackgroundImageEditEnabled] = useState(false)
+  const [backgroundImageDrag, setBackgroundImageDrag] = useState<{
+    pointerId: number
+    pointerX: number
+    pointerY: number
+    startOffsetU: number
+    startOffsetV: number
+  } | null>(null)
   const [gradientPanelOpen, setGradientPanelOpen] = useState(false)
   const [selectedGradientStopId, setSelectedGradientStopId] = useState<string | null>(
     DEFAULT_BACKGROUND_GRADIENT_SETTINGS.stops[1]?.id ??
@@ -1035,6 +1082,19 @@ function App() {
   useEffect(() => {
     viewportRef.current?.setBackgroundGradient(backgroundGradient)
   }, [backgroundGradient])
+
+  useEffect(() => {
+    viewportRef.current?.setBackgroundImage(backgroundImage)
+  }, [backgroundImage])
+
+  useEffect(
+    () => () => {
+      if (backgroundImage.sourceUrl) {
+        URL.revokeObjectURL(backgroundImage.sourceUrl)
+      }
+    },
+    [backgroundImage.sourceUrl],
+  )
 
   useEffect(() => {
     viewportRef.current?.setAntialiasEnabled(antialiasEnabled)
@@ -1658,6 +1718,7 @@ function App() {
     const nextGradient = createRandomGradientSettings()
     setBackgroundGradient(nextGradient)
     setGradientPanelOpen(true)
+    setBackgroundImageEditEnabled(false)
     setSelectedGradientStopId(nextGradient.stops[1]?.id ?? nextGradient.stops[0]?.id ?? null)
   }
 
@@ -1803,6 +1864,123 @@ function App() {
       name: selectedFile.name,
       path: selectedFile.path,
     })
+  }
+
+  const loadBackgroundImageFile = (file: File) => {
+    const isPng =
+      file.type === 'image/png' || file.name.toLowerCase().endsWith('.png')
+
+    if (!isPng) {
+      updateStatus('background / png gerekli')
+      return
+    }
+
+    const sourceUrl = URL.createObjectURL(file)
+    const image = new Image()
+
+    image.onload = () => {
+      setBackgroundImage((current) => ({
+        ...current,
+        enabled: true,
+        image,
+        name: file.name,
+        offsetU: 0,
+        offsetV: 0,
+        sourceKey: `${file.name}:${file.size}:${file.lastModified}`,
+        sourceUrl,
+      }))
+      setGradientPanelOpen(false)
+      setBackgroundImageEditEnabled(true)
+      updateStatus(`background / ${file.name}`)
+    }
+
+    image.onerror = () => {
+      URL.revokeObjectURL(sourceUrl)
+      updateStatus('error / background png yuklenemedi')
+    }
+
+    image.src = sourceUrl
+  }
+
+  const onBackgroundImageInputChange = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0]
+    if (file) {
+      loadBackgroundImageFile(file)
+    }
+
+    event.target.value = ''
+  }
+
+  const clearBackgroundImage = () => {
+    setBackgroundImage(DEFAULT_BACKGROUND_IMAGE_SETTINGS)
+    setBackgroundImageEditEnabled(false)
+    setBackgroundImageDrag(null)
+    updateStatus('background image / clear')
+  }
+
+  const setBackgroundImageMode = (mode: ViewBackgroundImageMode) => {
+    setBackgroundImage((current) => ({
+      ...current,
+      mode,
+    }))
+  }
+
+  const setBackgroundImageValue = (
+    key: 'offsetU' | 'offsetV' | 'scaleU' | 'scaleV',
+    value: number,
+  ) => {
+    setBackgroundImage((current) => ({
+      ...current,
+      [key]: value,
+    }))
+  }
+
+  const beginBackgroundImageDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!backgroundImage.enabled || !backgroundImageEditEnabled) {
+      return
+    }
+
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setBackgroundImageDrag({
+      pointerId: event.pointerId,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      startOffsetU: backgroundImage.offsetU,
+      startOffsetV: backgroundImage.offsetV,
+    })
+  }
+
+  const moveBackgroundImageDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!backgroundImageDrag || event.pointerId !== backgroundImageDrag.pointerId) {
+      return
+    }
+
+    event.preventDefault()
+    const width = Math.max(1, viewerBounds.width)
+    const height = Math.max(1, viewerBounds.height)
+    const deltaX = (event.clientX - backgroundImageDrag.pointerX) / width
+    const deltaY = (event.clientY - backgroundImageDrag.pointerY) / height
+
+    setBackgroundImage((current) => ({
+      ...current,
+      offsetU: clamp(backgroundImageDrag.startOffsetU + deltaX, -2, 2),
+      offsetV: clamp(backgroundImageDrag.startOffsetV + deltaY, -2, 2),
+    }))
+  }
+
+  const endBackgroundImageDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!backgroundImageDrag || event.pointerId !== backgroundImageDrag.pointerId) {
+      return
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+
+    setBackgroundImageDrag(null)
   }
 
   const runModelExport = async (bakeOptions?: BakeExportOptions) => {
@@ -2895,6 +3073,13 @@ function App() {
           onChange={onFallbackInputChange}
           type="file"
         />
+        <input
+          ref={backgroundImageInputRef}
+          accept={BACKGROUND_IMAGE_ACCEPT}
+          className="visually-hidden"
+          onChange={onBackgroundImageInputChange}
+          type="file"
+        />
 
         <section className="panel">
           <div className="panel-label">material</div>
@@ -3074,6 +3259,17 @@ function App() {
             ref={viewerHostRef}
           >
             {backgroundGridEnabled ? <div className="viewer-grid-overlay" /> : null}
+            {backgroundImage.enabled && backgroundImageEditEnabled ? (
+              <div
+                className={`background-image-drag-layer ${
+                  backgroundImageDrag ? 'background-image-drag-layer-active' : ''
+                }`}
+                onPointerCancel={endBackgroundImageDrag}
+                onPointerDown={beginBackgroundImageDrag}
+                onPointerMove={moveBackgroundImageDrag}
+                onPointerUp={endBackgroundImageDrag}
+              />
+            ) : null}
             {backgroundGradient.enabled && gradientPanelOpen ? (
               <>
                 <div
@@ -3647,6 +3843,51 @@ function App() {
           </div>
             <div className="viewer-export-group">
               <div className="viewer-gradient-stack">
+                {backgroundImage.enabled && backgroundImageEditEnabled ? (
+                  <section className="background-image-panel">
+                    <div className="background-image-name">
+                      {backgroundImage.name || 'background.png'}
+                    </div>
+                    <div className="background-image-modes">
+                      {(['cover', 'tile'] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          className={`chip background-image-mode ${
+                            backgroundImage.mode === mode ? 'chip-active' : ''
+                          }`}
+                          onClick={() => setBackgroundImageMode(mode)}
+                          type="button"
+                        >
+                          {mode}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="background-image-sliders">
+                      {BACKGROUND_IMAGE_SLIDERS.map((item) => (
+                        <SliderField
+                          key={item.key}
+                          decimals={item.decimals ?? 2}
+                          defaultValue={item.defaultValue}
+                          label={item.label}
+                          max={item.max}
+                          min={item.min}
+                          onChange={(value) =>
+                            setBackgroundImageValue(item.key, value)
+                          }
+                          step={item.step}
+                          value={backgroundImage[item.key]}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      className="chip gradient-editor-remove"
+                      onClick={clearBackgroundImage}
+                      type="button"
+                    >
+                      clear image
+                    </button>
+                  </section>
+                ) : null}
                 {backgroundGradient.enabled && gradientPanelOpen ? (
                   <section className="gradient-editor-panel">
                     <div className="gradient-editor-strip" style={{ backgroundImage: gradientCss }} />
@@ -3718,6 +3959,30 @@ function App() {
                   </section>
                 ) : null}
                 <div className="viewer-gradient-controls">
+                  <button
+                    className={`chip viewer-export-chip ${
+                      backgroundImage.enabled ? 'chip-active' : ''
+                    }`}
+                    onClick={() => backgroundImageInputRef.current?.click()}
+                    type="button"
+                  >
+                    bg img
+                  </button>
+                  <button
+                    className={`chip viewer-export-chip ${
+                      backgroundImage.enabled && backgroundImageEditEnabled
+                        ? 'chip-active'
+                        : ''
+                    }`}
+                    disabled={!backgroundImage.enabled}
+                    onClick={() => {
+                      setGradientPanelOpen(false)
+                      setBackgroundImageEditEnabled((current) => !current)
+                    }}
+                    type="button"
+                  >
+                    move
+                  </button>
                   <button
                     className={`chip viewer-export-chip ${
                       backgroundGradient.enabled ? 'chip-active' : ''

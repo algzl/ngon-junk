@@ -11,6 +11,7 @@ import {
   Float32BufferAttribute,
   Group,
   HemisphereLight,
+  LinearFilter,
   MOUSE,
   Mesh,
   MeshBasicMaterial,
@@ -132,6 +133,19 @@ export type ViewBackgroundGradientSettings = {
   stops: ViewBackgroundGradientStop[]
 }
 
+export type ViewBackgroundImageMode = 'cover' | 'tile'
+
+export type ViewBackgroundImageSettings = {
+  enabled: boolean
+  image: HTMLImageElement | null
+  mode: ViewBackgroundImageMode
+  offsetU: number
+  offsetV: number
+  scaleU: number
+  scaleV: number
+  sourceKey: string
+}
+
 type ViewSnapshot = {
   cameraPosition: [number, number, number]
   controlTarget: [number, number, number]
@@ -211,6 +225,17 @@ const DEFAULT_BACKGROUND_GRADIENT_SETTINGS: ViewBackgroundGradientSettings = {
     { alpha: 1, color: '#aaa26f', id: 'mid', position: 0.41 },
     { alpha: 1, color: '#982525', id: 'end', position: 0.96 },
   ],
+}
+
+const DEFAULT_BACKGROUND_IMAGE_SETTINGS: ViewBackgroundImageSettings = {
+  enabled: false,
+  image: null,
+  mode: 'cover',
+  offsetU: 0,
+  offsetV: 0,
+  scaleU: 1,
+  scaleV: 1,
+  sourceKey: '',
 }
 
 const gradientStopToCss = (stop: ViewBackgroundGradientStop) => {
@@ -1195,6 +1220,8 @@ export class ModelViewport {
   private backgroundColor = '#ffffff'
   private backgroundGradient: ViewBackgroundGradientSettings =
     DEFAULT_BACKGROUND_GRADIENT_SETTINGS
+  private backgroundImage: ViewBackgroundImageSettings =
+    DEFAULT_BACKGROUND_IMAGE_SETTINGS
   private backgroundGridEnabled = false
   private backgroundPatternKey = ''
   private backgroundPatternTexture: CanvasTexture | null = null
@@ -1473,6 +1500,22 @@ export class ModelViewport {
         id: stop.id,
         position: Math.min(Math.max(stop.position, 0), 1),
       })),
+    }
+    this.backgroundPatternKey = ''
+    this.applyBackgroundColor()
+    this.requestRender()
+  }
+
+  setBackgroundImage(settings: ViewBackgroundImageSettings) {
+    this.backgroundImage = {
+      enabled: settings.enabled,
+      image: settings.image,
+      mode: settings.mode,
+      offsetU: settings.offsetU,
+      offsetV: settings.offsetV,
+      scaleU: Math.max(0.05, settings.scaleU),
+      scaleV: Math.max(0.05, settings.scaleV),
+      sourceKey: settings.sourceKey,
     }
     this.backgroundPatternKey = ''
     this.applyBackgroundColor()
@@ -1771,7 +1814,8 @@ export class ModelViewport {
     const outputCanvas = await this.capturePreviewCanvas({
       format: options.format,
       height: options.height,
-      transparentBackground: options.format === 'png',
+      transparentBackground:
+        options.format === 'png' && !this.hasBackgroundImage(),
       width: options.width,
     })
 
@@ -2161,7 +2205,9 @@ export class ModelViewport {
     const background = this.resolveBackgroundColor()
     this.scene.background = disablePatternBackground
       ? null
-      : this.backgroundGridEnabled || this.backgroundGradient.enabled
+      : this.backgroundGridEnabled ||
+          this.backgroundGradient.enabled ||
+          this.hasBackgroundImage()
         ? this.getBackgroundPatternTexture(background)
         : background
     const floorMaterial = this.floorShadow.material
@@ -2178,6 +2224,10 @@ export class ModelViewport {
     }
 
     return new Color(this.backgroundColor)
+  }
+
+  private hasBackgroundImage() {
+    return Boolean(this.backgroundImage.enabled && this.backgroundImage.image)
   }
 
   private renderScene(
@@ -2422,7 +2472,12 @@ export class ModelViewport {
           .map((stop) => `${stop.id}:${stop.color}:${stop.alpha}:${stop.position}`)
           .join(';')}`
       : 'none'
-    const key = `${this.backgroundColor}|${this.backgroundGridEnabled}|${gradientKey}|${width}|${height}`
+    const image = this.backgroundImage.image
+    const imageKey =
+      this.hasBackgroundImage() && image
+        ? `${this.backgroundImage.sourceKey}|${this.backgroundImage.mode}|${this.backgroundImage.scaleU}|${this.backgroundImage.scaleV}|${this.backgroundImage.offsetU}|${this.backgroundImage.offsetV}|${image.naturalWidth}x${image.naturalHeight}`
+        : 'none'
+    const key = `${this.backgroundColor}|${this.backgroundGridEnabled}|${gradientKey}|${imageKey}|${width}|${height}`
 
     if (this.backgroundPatternTexture && this.backgroundPatternKey === key) {
       return this.backgroundPatternTexture
@@ -2463,6 +2518,10 @@ export class ModelViewport {
     }
     context.fillRect(0, 0, canvas.width, canvas.height)
 
+    if (this.hasBackgroundImage() && image) {
+      this.drawBackgroundImage(context, canvas, image)
+    }
+
     if (this.backgroundGridEnabled) {
       const tile = document.createElement('canvas')
       tile.width = 7
@@ -2485,12 +2544,65 @@ export class ModelViewport {
     }
 
     const texture = new CanvasTexture(canvas)
-    texture.magFilter = NearestFilter
-    texture.minFilter = NearestFilter
+    texture.magFilter = this.hasBackgroundImage() ? LinearFilter : NearestFilter
+    texture.minFilter = this.hasBackgroundImage() ? LinearFilter : NearestFilter
     texture.needsUpdate = true
     this.backgroundPatternTexture = texture
     this.backgroundPatternKey = key
     return texture
+  }
+
+  private drawBackgroundImage(
+    context: CanvasRenderingContext2D,
+    canvas: HTMLCanvasElement,
+    image: HTMLImageElement,
+  ) {
+    const imageWidth = image.naturalWidth || image.width
+    const imageHeight = image.naturalHeight || image.height
+
+    if (!imageWidth || !imageHeight) {
+      return
+    }
+
+    const scaleU = Math.max(0.05, this.backgroundImage.scaleU)
+    const scaleV = Math.max(0.05, this.backgroundImage.scaleV)
+    const offsetX = this.backgroundImage.offsetU * canvas.width
+    const offsetY = this.backgroundImage.offsetV * canvas.height
+
+    if (this.backgroundImage.mode === 'tile') {
+      const baseScale = Math.max(canvas.width / imageWidth, canvas.height / imageHeight)
+      const tileWidth = Math.max(1, Math.round(imageWidth * baseScale * scaleU))
+      const tileHeight = Math.max(1, Math.round(imageHeight * baseScale * scaleV))
+      const tile = document.createElement('canvas')
+      tile.width = tileWidth
+      tile.height = tileHeight
+      const tileContext = tile.getContext('2d')
+
+      if (!tileContext) {
+        return
+      }
+
+      tileContext.drawImage(image, 0, 0, tileWidth, tileHeight)
+      const pattern = context.createPattern(tile, 'repeat')
+
+      if (!pattern) {
+        return
+      }
+
+      context.save()
+      context.translate(offsetX % tileWidth, offsetY % tileHeight)
+      context.fillStyle = pattern
+      context.fillRect(-tileWidth, -tileHeight, canvas.width + tileWidth * 2, canvas.height + tileHeight * 2)
+      context.restore()
+      return
+    }
+
+    const baseScale = Math.max(canvas.width / imageWidth, canvas.height / imageHeight)
+    const drawWidth = imageWidth * baseScale * scaleU
+    const drawHeight = imageHeight * baseScale * scaleV
+    const drawX = (canvas.width - drawWidth) / 2 + offsetX
+    const drawY = (canvas.height - drawHeight) / 2 + offsetY
+    context.drawImage(image, drawX, drawY, drawWidth, drawHeight)
   }
 
   private rebuildWireOverlay() {
