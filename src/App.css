@@ -808,7 +808,7 @@
   flex-wrap: nowrap;
   width: max-content;
   max-width: calc(100% - 180px);
-  overflow: clip;
+  overflow: visible;
   transform: translateX(-50%);
 }
 
