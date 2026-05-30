@@ -11,7 +11,7 @@ Export reliability and release metadata refresh.
 - Added YCSWU Tools Hub metadata files and schema context for catalog/update integration.
 - Treated `release/web app` as the single web deploy folder for cPanel upload.
 - Added PNG background images with cover/tile modes, U/V scale controls and drag positioning.
-- Added layered background photo stacking with per-layer ordering and scale lock.
+- Added layered background photo stacking with drag reordering, per-layer blur and scale lock.
 
 ### Fixed
 

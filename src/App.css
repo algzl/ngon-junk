@@ -299,6 +299,7 @@
 }
 
 .app-shell.motion-lock .sidebar,
+.app-shell.motion-lock .background-panel,
 .app-shell.motion-lock .light-panel,
 .app-shell.motion-lock .uv-panel,
 .app-shell.motion-lock .retopo-panel {
@@ -461,21 +462,6 @@
   pointer-events: auto;
 }
 
-.background-image-panel {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  width: 300px;
-  display: grid;
-  gap: 9px;
-  padding: 10px;
-  border: 1px solid #000000;
-  background: rgba(255, 255, 255, 0.94);
-  z-index: 3;
-  pointer-events: auto;
-}
-
 .background-image-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -504,13 +490,16 @@
   white-space: nowrap;
 }
 
-.background-image-order-row {
+.background-image-layer-chip-dragging {
+  opacity: 0.48;
+}
+
+.background-image-action-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 
-.background-image-order-chip {
+.background-image-action-chip {
   min-width: 0;
   padding-inline: 7px;
   text-align: center;
@@ -787,6 +776,7 @@
   flex-wrap: wrap;
 }
 
+.background-panel,
 .light-panel,
 .aa-panel,
 .retopo-panel,
@@ -800,6 +790,32 @@
   gap: 8px;
   z-index: 3;
   pointer-events: auto;
+}
+
+.background-panel {
+  width: 300px;
+  left: 50%;
+  bottom: 72px;
+  z-index: 5;
+  transform: translateX(-50%);
+}
+
+.background-panel-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.background-panel-title {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.76rem;
+  text-transform: lowercase;
+}
+
+.background-panel-body {
+  display: grid;
+  gap: 9px;
 }
 
 .panel-collapsed {

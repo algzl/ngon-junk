@@ -41,7 +41,7 @@ type ModelSummary = {
 type MaterialMode = 'original' | 'custom'
 type ImageExportFormat = 'jpg' | 'png'
 type ModelExportFormat = 'glb' | 'obj'
-type FloatingPanelKey = 'light' | 'motion' | 'uv' | 'wire'
+type FloatingPanelKey = 'background' | 'light' | 'motion' | 'uv' | 'wire'
 type BakeDeliveryMode = 'embedded' | 'separate'
 type PreviewFramePreset = 'landscape' | 'portrait' | 'square'
 type ImageExportScale = 2 | 4
@@ -80,6 +80,12 @@ type BackgroundImageState = {
   layers: BackgroundImageLayer[]
   selectedLayerId: string | null
 }
+type BackgroundImageSliderKey =
+  | 'blur'
+  | 'offsetU'
+  | 'offsetV'
+  | 'scaleU'
+  | 'scaleV'
 type GradientDragTarget =
   | {
       endX: number
@@ -335,7 +341,7 @@ const BACKGROUND_IMAGE_ACCEPT = 'image/png,.png'
 const BACKGROUND_IMAGE_SLIDERS: Array<{
   decimals?: number
   defaultValue: number
-  key: 'offsetU' | 'offsetV' | 'scaleU' | 'scaleV'
+  key: BackgroundImageSliderKey
   label: string
   max: number
   min: number
@@ -345,6 +351,7 @@ const BACKGROUND_IMAGE_SLIDERS: Array<{
   { defaultValue: 1, key: 'scaleV', label: 'v', max: 8, min: 0.05, step: 0.01 },
   { defaultValue: 0, key: 'offsetU', label: 'x', max: 2, min: -2, step: 0.01 },
   { defaultValue: 0, key: 'offsetV', label: 'y', max: 2, min: -2, step: 0.01 },
+  { defaultValue: 0, key: 'blur', label: 'blur', max: 48, min: 0, step: 0.5 },
 ]
 
 const MAX_IMAGE_EXPORT_LONG_EDGE = 8192
@@ -778,6 +785,7 @@ const SliderField = ({
 }
 
 const PANEL_TITLES: Record<FloatingPanelKey, string> = {
+  background: 'bg img',
   light: 'light',
   motion: 'motion',
   uv: 'uv',
@@ -785,6 +793,7 @@ const PANEL_TITLES: Record<FloatingPanelKey, string> = {
 }
 
 const DEFAULT_COLLAPSED_PANELS: Record<FloatingPanelKey, boolean> = {
+  background: false,
   light: false,
   motion: false,
   uv: false,
@@ -792,6 +801,7 @@ const DEFAULT_COLLAPSED_PANELS: Record<FloatingPanelKey, boolean> = {
 }
 
 const DEFAULT_DOCK_PANEL_POSITIONS: Record<DockPanelKey, DockPanelPosition | null> = {
+  background: null,
   export: null,
   frame: null,
   light: null,
@@ -836,6 +846,8 @@ function App() {
   const [backgroundImageEditEnabled, setBackgroundImageEditEnabled] = useState(false)
   const [backgroundImageScaleLocked, setBackgroundImageScaleLocked] =
     useState(true)
+  const [backgroundImageLayerDragId, setBackgroundImageLayerDragId] =
+    useState<string | null>(null)
   const [backgroundImageDrag, setBackgroundImageDrag] = useState<{
     pointerId: number
     pointerX: number
@@ -1926,6 +1938,7 @@ function App() {
     image.onload = () => {
       backgroundImageUrlsRef.current.add(sourceUrl)
       const nextLayer: BackgroundImageLayer = {
+        blur: 0,
         id: layerId,
         image,
         mode: 'cover',
@@ -1945,6 +1958,10 @@ function App() {
       }))
       setGradientPanelOpen(false)
       setBackgroundImageEditEnabled(true)
+      setCollapsedPanels((current) => ({
+        ...current,
+        background: false,
+      }))
       setBackgroundImageScaleLocked(true)
       updateStatus(`background / ${file.name}`)
     }
@@ -2021,12 +2038,10 @@ function App() {
     }))
   }
 
-  const moveSelectedBackgroundImageLayer = (direction: -1 | 1) => {
+  const reorderBackgroundImageLayer = (sourceId: string, targetId: string) => {
     setBackgroundImage((current) => {
-      const selectedId =
-        current.selectedLayerId ?? current.layers[current.layers.length - 1]?.id ?? null
-      const currentIndex = current.layers.findIndex((layer) => layer.id === selectedId)
-      const nextIndex = clamp(currentIndex + direction, 0, current.layers.length - 1)
+      const currentIndex = current.layers.findIndex((layer) => layer.id === sourceId)
+      const nextIndex = current.layers.findIndex((layer) => layer.id === targetId)
 
       if (currentIndex < 0 || currentIndex === nextIndex) {
         return current
@@ -2039,9 +2054,53 @@ function App() {
       return {
         ...current,
         layers: nextLayers,
-        selectedLayerId: selectedId,
+        selectedLayerId: sourceId,
       }
     })
+  }
+
+  const beginBackgroundImageLayerDrag = (
+    event: React.DragEvent<HTMLButtonElement>,
+    layerId: string,
+  ) => {
+    event.stopPropagation()
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', layerId)
+    setBackgroundImageLayerDragId(layerId)
+    selectBackgroundImageLayer(layerId)
+  }
+
+  const dragBackgroundImageLayerOver = (
+    event: React.DragEvent<HTMLButtonElement>,
+    targetLayerId: string,
+  ) => {
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'move'
+
+    const sourceLayerId =
+      backgroundImageLayerDragId || event.dataTransfer.getData('text/plain')
+
+    if (sourceLayerId && sourceLayerId !== targetLayerId) {
+      reorderBackgroundImageLayer(sourceLayerId, targetLayerId)
+    }
+  }
+
+  const dropBackgroundImageLayer = (
+    event: React.DragEvent<HTMLButtonElement>,
+    targetLayerId: string,
+  ) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    const sourceLayerId =
+      backgroundImageLayerDragId || event.dataTransfer.getData('text/plain')
+
+    if (sourceLayerId && sourceLayerId !== targetLayerId) {
+      reorderBackgroundImageLayer(sourceLayerId, targetLayerId)
+    }
+
+    setBackgroundImageLayerDragId(null)
   }
 
   const setBackgroundImageMode = (mode: ViewBackgroundImageMode) => {
@@ -2059,7 +2118,7 @@ function App() {
   }
 
   const setBackgroundImageValue = (
-    key: 'offsetU' | 'offsetV' | 'scaleU' | 'scaleV',
+    key: BackgroundImageSliderKey,
     value: number,
   ) => {
     setBackgroundImage((current) => ({
@@ -3988,6 +4047,142 @@ function App() {
             ) : null}
           </section>
 
+          {hasBackgroundImageLayers && backgroundImageEditEnabled ? (
+            <section
+              className={`background-panel ${
+                collapsedPanels.background ? 'panel-collapsed' : ''
+              }`}
+              data-dock-key="background"
+              style={getDockPanelStyle('background')}
+            >
+              <div
+                className="background-panel-topline panel-drag-handle"
+                onPointerDown={(event) => beginDockPanelDrag(event, 'background')}
+              >
+                <div className="background-panel-title">
+                  {PANEL_TITLES.background}
+                </div>
+                <button
+                  className="chip panel-collapse-chip"
+                  onClick={() => togglePanelCollapse('background')}
+                  type="button"
+                >
+                  {collapsedPanels.background ? '+' : '-'}
+                </button>
+              </div>
+              {!collapsedPanels.background ? (
+                <div className="background-panel-body">
+                  <div className="background-image-name">
+                    {selectedBackgroundImageLayer?.name || 'background.png'}
+                  </div>
+                  <div
+                    className="background-image-layer-list"
+                    onDragOver={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      setBackgroundImageLayerDragId(null)
+                    }}
+                  >
+                    {backgroundImage.layers.map((layer, index) => (
+                      <button
+                        key={layer.id}
+                        className={`chip background-image-layer-chip ${
+                          layer.id === selectedBackgroundImageLayer?.id
+                            ? 'chip-active'
+                            : ''
+                        } ${
+                          layer.id === backgroundImageLayerDragId
+                            ? 'background-image-layer-chip-dragging'
+                            : ''
+                        }`}
+                        draggable
+                        onDragEnd={() => setBackgroundImageLayerDragId(null)}
+                        onDragOver={(event) =>
+                          dragBackgroundImageLayerOver(event, layer.id)
+                        }
+                        onDragStart={(event) =>
+                          beginBackgroundImageLayerDrag(event, layer.id)
+                        }
+                        onDrop={(event) => dropBackgroundImageLayer(event, layer.id)}
+                        onClick={() => selectBackgroundImageLayer(layer.id)}
+                        type="button"
+                      >
+                        {index + 1}. {layer.name}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="background-image-action-row">
+                    <button
+                      className="chip background-image-action-chip"
+                      onClick={() => backgroundImageInputRef.current?.click()}
+                      type="button"
+                    >
+                      bg img
+                    </button>
+                  </div>
+                  <div className="background-image-modes">
+                    {(['cover', 'tile'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        className={`chip background-image-mode ${
+                          selectedBackgroundImageLayer?.mode === mode
+                            ? 'chip-active'
+                            : ''
+                        }`}
+                        disabled={!selectedBackgroundImageLayer}
+                        onClick={() => setBackgroundImageMode(mode)}
+                        type="button"
+                      >
+                        {mode}
+                      </button>
+                    ))}
+                  </div>
+                  <label className="background-image-lock-row">
+                    <span>lock u/v</span>
+                    <input
+                      checked={backgroundImageScaleLocked}
+                      onChange={(event) =>
+                        setBackgroundImageScaleLock(event.target.checked)
+                      }
+                      type="checkbox"
+                    />
+                  </label>
+                  <div className="background-image-sliders">
+                    {BACKGROUND_IMAGE_SLIDERS.map((item) => (
+                      <SliderField
+                        key={item.key}
+                        decimals={item.decimals ?? 2}
+                        defaultValue={item.defaultValue}
+                        label={item.label}
+                        max={item.max}
+                        min={item.min}
+                        onChange={(value) =>
+                          setBackgroundImageValue(item.key, value)
+                        }
+                        step={item.step}
+                        value={
+                          selectedBackgroundImageLayer?.[item.key] ??
+                          item.defaultValue
+                        }
+                      />
+                    ))}
+                  </div>
+                  <button
+                    className="chip gradient-editor-remove"
+                    onClick={clearBackgroundImage}
+                    type="button"
+                  >
+                    clear image
+                  </button>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
         <div
           className="viewer-export-bar"
           data-dock-key="export"
@@ -4000,113 +4195,7 @@ function App() {
             export
           </div>
             <div className="viewer-export-group">
-              <div className="viewer-gradient-stack">
-                {hasBackgroundImageLayers && backgroundImageEditEnabled ? (
-                  <section className="background-image-panel">
-                    <div className="background-image-name">
-                      {selectedBackgroundImageLayer?.name || 'background.png'}
-                    </div>
-                    <div className="background-image-layer-list">
-                      {backgroundImage.layers.map((layer, index) => (
-                        <button
-                          key={layer.id}
-                          className={`chip background-image-layer-chip ${
-                            layer.id === selectedBackgroundImageLayer?.id
-                              ? 'chip-active'
-                              : ''
-                          }`}
-                          onClick={() => selectBackgroundImageLayer(layer.id)}
-                          type="button"
-                        >
-                          {index + 1}. {layer.name}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="background-image-order-row">
-                      <button
-                        className="chip background-image-order-chip"
-                        disabled={selectedBackgroundImageLayerIndex <= 0}
-                        onClick={() => moveSelectedBackgroundImageLayer(-1)}
-                        type="button"
-                      >
-                        back
-                      </button>
-                      <button
-                        className="chip background-image-order-chip"
-                        disabled={
-                          selectedBackgroundImageLayerIndex < 0 ||
-                          selectedBackgroundImageLayerIndex >=
-                            backgroundImage.layers.length - 1
-                        }
-                        onClick={() => moveSelectedBackgroundImageLayer(1)}
-                        type="button"
-                      >
-                        front
-                      </button>
-                      <button
-                        className="chip background-image-order-chip"
-                        onClick={() => backgroundImageInputRef.current?.click()}
-                        type="button"
-                      >
-                        add photo
-                      </button>
-                    </div>
-                    <div className="background-image-modes">
-                      {(['cover', 'tile'] as const).map((mode) => (
-                        <button
-                          key={mode}
-                          className={`chip background-image-mode ${
-                            selectedBackgroundImageLayer?.mode === mode
-                              ? 'chip-active'
-                              : ''
-                          }`}
-                          disabled={!selectedBackgroundImageLayer}
-                          onClick={() => setBackgroundImageMode(mode)}
-                          type="button"
-                        >
-                          {mode}
-                        </button>
-                      ))}
-                    </div>
-                    <label className="background-image-lock-row">
-                      <span>lock u/v</span>
-                      <input
-                        checked={backgroundImageScaleLocked}
-                        onChange={(event) =>
-                          setBackgroundImageScaleLock(event.target.checked)
-                        }
-                        type="checkbox"
-                      />
-                    </label>
-                    <div className="background-image-sliders">
-                      {BACKGROUND_IMAGE_SLIDERS.map((item) => (
-                        <SliderField
-                          key={item.key}
-                          decimals={item.decimals ?? 2}
-                          defaultValue={item.defaultValue}
-                          label={item.label}
-                          max={item.max}
-                          min={item.min}
-                          onChange={(value) =>
-                            setBackgroundImageValue(item.key, value)
-                          }
-                          step={item.step}
-                          value={
-                            selectedBackgroundImageLayer?.[item.key] ??
-                            item.defaultValue
-                          }
-                        />
-                      ))}
-                    </div>
-                    <button
-                      className="chip gradient-editor-remove"
-                      onClick={clearBackgroundImage}
-                      type="button"
-                    >
-                      clear image
-                    </button>
-                  </section>
-                ) : null}
+          <div className="viewer-gradient-stack">
                 {backgroundGradient.enabled && gradientPanelOpen ? (
                   <section className="gradient-editor-panel">
                     <div className="gradient-editor-strip" style={{ backgroundImage: gradientCss }} />
@@ -4185,7 +4274,7 @@ function App() {
                     onClick={() => backgroundImageInputRef.current?.click()}
                     type="button"
                   >
-                    add photo
+                    bg img
                   </button>
                   <button
                     className={`chip viewer-export-chip ${
@@ -4196,7 +4285,14 @@ function App() {
                     disabled={!hasBackgroundImageLayers}
                     onClick={() => {
                       setGradientPanelOpen(false)
-                      setBackgroundImageEditEnabled((current) => !current)
+                      const nextOpen = !backgroundImageEditEnabled
+                      setBackgroundImageEditEnabled(nextOpen)
+                      if (nextOpen) {
+                        setCollapsedPanels((current) => ({
+                          ...current,
+                          background: false,
+                        }))
+                      }
                     }}
                     type="button"
                   >

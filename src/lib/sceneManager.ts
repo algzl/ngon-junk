@@ -136,6 +136,7 @@ export type ViewBackgroundGradientSettings = {
 export type ViewBackgroundImageMode = 'cover' | 'tile'
 
 export type ViewBackgroundImageLayerSettings = {
+  blur: number
   id: string
   image: HTMLImageElement | null
   mode: ViewBackgroundImageMode
@@ -1510,6 +1511,7 @@ export class ModelViewport {
       enabled: settings.enabled,
       layers: settings.layers.map((layer) => ({
         id: layer.id,
+        blur: Math.max(0, layer.blur),
         image: layer.image,
         mode: layer.mode,
         offsetU: layer.offsetU,
@@ -2481,7 +2483,7 @@ export class ModelViewport {
       ? this.backgroundImage.layers
           .map((layer) =>
             layer.image
-              ? `${layer.id}:${layer.sourceKey}:${layer.mode}:${layer.scaleU}:${layer.scaleV}:${layer.offsetU}:${layer.offsetV}:${layer.image.naturalWidth}x${layer.image.naturalHeight}`
+              ? `${layer.id}:${layer.sourceKey}:${layer.mode}:${layer.blur}:${layer.scaleU}:${layer.scaleV}:${layer.offsetU}:${layer.offsetV}:${layer.image.naturalWidth}x${layer.image.naturalHeight}`
               : `${layer.id}:empty`,
           )
           .join(';')
@@ -2587,6 +2589,7 @@ export class ModelViewport {
     const scaleV = Math.max(0.05, layer.scaleV)
     const offsetX = layer.offsetU * canvas.width
     const offsetY = layer.offsetV * canvas.height
+    const blur = Math.max(0, layer.blur)
 
     if (layer.mode === 'tile') {
       const baseScale = Math.max(canvas.width / imageWidth, canvas.height / imageHeight)
@@ -2601,6 +2604,7 @@ export class ModelViewport {
         return
       }
 
+      tileContext.filter = blur > 0 ? `blur(${blur}px)` : 'none'
       tileContext.drawImage(image, 0, 0, tileWidth, tileHeight)
       const pattern = context.createPattern(tile, 'repeat')
 
@@ -2621,7 +2625,10 @@ export class ModelViewport {
     const drawHeight = imageHeight * baseScale * scaleV
     const drawX = (canvas.width - drawWidth) / 2 + offsetX
     const drawY = (canvas.height - drawHeight) / 2 + offsetY
+    context.save()
+    context.filter = blur > 0 ? `blur(${blur}px)` : 'none'
     context.drawImage(image, drawX, drawY, drawWidth, drawHeight)
+    context.restore()
   }
 
   private rebuildWireOverlay() {
