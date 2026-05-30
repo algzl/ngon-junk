@@ -135,8 +135,8 @@ export type ViewBackgroundGradientSettings = {
 
 export type ViewBackgroundImageMode = 'cover' | 'tile'
 
-export type ViewBackgroundImageSettings = {
-  enabled: boolean
+export type ViewBackgroundImageLayerSettings = {
+  id: string
   image: HTMLImageElement | null
   mode: ViewBackgroundImageMode
   offsetU: number
@@ -144,6 +144,11 @@ export type ViewBackgroundImageSettings = {
   scaleU: number
   scaleV: number
   sourceKey: string
+}
+
+export type ViewBackgroundImageSettings = {
+  enabled: boolean
+  layers: ViewBackgroundImageLayerSettings[]
 }
 
 type ViewSnapshot = {
@@ -229,13 +234,7 @@ const DEFAULT_BACKGROUND_GRADIENT_SETTINGS: ViewBackgroundGradientSettings = {
 
 const DEFAULT_BACKGROUND_IMAGE_SETTINGS: ViewBackgroundImageSettings = {
   enabled: false,
-  image: null,
-  mode: 'cover',
-  offsetU: 0,
-  offsetV: 0,
-  scaleU: 1,
-  scaleV: 1,
-  sourceKey: '',
+  layers: [],
 }
 
 const gradientStopToCss = (stop: ViewBackgroundGradientStop) => {
@@ -1509,13 +1508,16 @@ export class ModelViewport {
   setBackgroundImage(settings: ViewBackgroundImageSettings) {
     this.backgroundImage = {
       enabled: settings.enabled,
-      image: settings.image,
-      mode: settings.mode,
-      offsetU: settings.offsetU,
-      offsetV: settings.offsetV,
-      scaleU: Math.max(0.05, settings.scaleU),
-      scaleV: Math.max(0.05, settings.scaleV),
-      sourceKey: settings.sourceKey,
+      layers: settings.layers.map((layer) => ({
+        id: layer.id,
+        image: layer.image,
+        mode: layer.mode,
+        offsetU: layer.offsetU,
+        offsetV: layer.offsetV,
+        scaleU: Math.max(0.05, layer.scaleU),
+        scaleV: Math.max(0.05, layer.scaleV),
+        sourceKey: layer.sourceKey,
+      })),
     }
     this.backgroundPatternKey = ''
     this.applyBackgroundColor()
@@ -2227,7 +2229,10 @@ export class ModelViewport {
   }
 
   private hasBackgroundImage() {
-    return Boolean(this.backgroundImage.enabled && this.backgroundImage.image)
+    return Boolean(
+      this.backgroundImage.enabled &&
+        this.backgroundImage.layers.some((layer) => layer.image),
+    )
   }
 
   private renderScene(
@@ -2472,11 +2477,15 @@ export class ModelViewport {
           .map((stop) => `${stop.id}:${stop.color}:${stop.alpha}:${stop.position}`)
           .join(';')}`
       : 'none'
-    const image = this.backgroundImage.image
-    const imageKey =
-      this.hasBackgroundImage() && image
-        ? `${this.backgroundImage.sourceKey}|${this.backgroundImage.mode}|${this.backgroundImage.scaleU}|${this.backgroundImage.scaleV}|${this.backgroundImage.offsetU}|${this.backgroundImage.offsetV}|${image.naturalWidth}x${image.naturalHeight}`
-        : 'none'
+    const imageKey = this.hasBackgroundImage()
+      ? this.backgroundImage.layers
+          .map((layer) =>
+            layer.image
+              ? `${layer.id}:${layer.sourceKey}:${layer.mode}:${layer.scaleU}:${layer.scaleV}:${layer.offsetU}:${layer.offsetV}:${layer.image.naturalWidth}x${layer.image.naturalHeight}`
+              : `${layer.id}:empty`,
+          )
+          .join(';')
+      : 'none'
     const key = `${this.backgroundColor}|${this.backgroundGridEnabled}|${gradientKey}|${imageKey}|${width}|${height}`
 
     if (this.backgroundPatternTexture && this.backgroundPatternKey === key) {
@@ -2518,8 +2527,12 @@ export class ModelViewport {
     }
     context.fillRect(0, 0, canvas.width, canvas.height)
 
-    if (this.hasBackgroundImage() && image) {
-      this.drawBackgroundImage(context, canvas, image)
+    if (this.hasBackgroundImage()) {
+      this.backgroundImage.layers.forEach((layer) => {
+        if (layer.image) {
+          this.drawBackgroundImage(context, canvas, layer)
+        }
+      })
     }
 
     if (this.backgroundGridEnabled) {
@@ -2555,8 +2568,14 @@ export class ModelViewport {
   private drawBackgroundImage(
     context: CanvasRenderingContext2D,
     canvas: HTMLCanvasElement,
-    image: HTMLImageElement,
+    layer: ViewBackgroundImageLayerSettings,
   ) {
+    const image = layer.image
+
+    if (!image) {
+      return
+    }
+
     const imageWidth = image.naturalWidth || image.width
     const imageHeight = image.naturalHeight || image.height
 
@@ -2564,12 +2583,12 @@ export class ModelViewport {
       return
     }
 
-    const scaleU = Math.max(0.05, this.backgroundImage.scaleU)
-    const scaleV = Math.max(0.05, this.backgroundImage.scaleV)
-    const offsetX = this.backgroundImage.offsetU * canvas.width
-    const offsetY = this.backgroundImage.offsetV * canvas.height
+    const scaleU = Math.max(0.05, layer.scaleU)
+    const scaleV = Math.max(0.05, layer.scaleV)
+    const offsetX = layer.offsetU * canvas.width
+    const offsetY = layer.offsetV * canvas.height
 
-    if (this.backgroundImage.mode === 'tile') {
+    if (layer.mode === 'tile') {
       const baseScale = Math.max(canvas.width / imageWidth, canvas.height / imageHeight)
       const tileWidth = Math.max(1, Math.round(imageWidth * baseScale * scaleU))
       const tileHeight = Math.max(1, Math.round(imageHeight * baseScale * scaleV))

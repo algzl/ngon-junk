@@ -19,8 +19,8 @@ import {
 import { loadModelFile, type ViewerFileSource } from './lib/modelLoader'
 import {
   ModelViewport,
+  type ViewBackgroundImageLayerSettings,
   type ViewBackgroundImageMode,
-  type ViewBackgroundImageSettings,
   type ViewBackgroundGradientStop,
   type ViewBackgroundGradientSettings,
   type ViewLightSettings,
@@ -71,9 +71,14 @@ type CloseExportSelection = {
   turntableFrames: boolean
   turntableGif: boolean
 }
-type BackgroundImageState = ViewBackgroundImageSettings & {
+type BackgroundImageLayer = ViewBackgroundImageLayerSettings & {
   name: string
   sourceUrl: string | null
+}
+type BackgroundImageState = {
+  enabled: boolean
+  layers: BackgroundImageLayer[]
+  selectedLayerId: string | null
 }
 type GradientDragTarget =
   | {
@@ -322,15 +327,8 @@ const DEFAULT_BACKGROUND_GRADIENT_SETTINGS: ViewBackgroundGradientSettings = {
 
 const DEFAULT_BACKGROUND_IMAGE_SETTINGS: BackgroundImageState = {
   enabled: false,
-  image: null,
-  mode: 'cover',
-  name: '',
-  offsetU: 0,
-  offsetV: 0,
-  scaleU: 1,
-  scaleV: 1,
-  sourceKey: '',
-  sourceUrl: null,
+  layers: [],
+  selectedLayerId: null,
 }
 
 const BACKGROUND_IMAGE_ACCEPT = 'image/png,.png'
@@ -357,6 +355,8 @@ const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
 const createGradientStopId = () =>
   `stop-${Math.random().toString(36).slice(2, 10)}`
+const createBackgroundImageLayerId = () =>
+  `bg-${Math.random().toString(36).slice(2, 10)}`
 
 const hexToRgb = (hex: string) => {
   const normalized = hex.replace('#', '')
@@ -701,6 +701,9 @@ type SliderFieldProps = {
 const clampValue = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
 
+const formatSliderValue = (value: number, decimals: number) =>
+  String(Number(value.toFixed(decimals)))
+
 const SliderField = ({
   decimals = 2,
   defaultValue,
@@ -711,7 +714,25 @@ const SliderField = ({
   step,
   value,
 }: SliderFieldProps) => {
-  const displayValue = Number(value.toFixed(decimals))
+  const [draftValue, setDraftValue] = useState<string | null>(null)
+  const displayValue = draftValue ?? formatSliderValue(value, decimals)
+
+  const resetValue = () => {
+    onChange(defaultValue)
+    setDraftValue(null)
+  }
+
+  const commitDraftValue = () => {
+    const normalizedValue = displayValue.trim().replace(',', '.')
+    const nextValue = Number(normalizedValue)
+
+    if (Number.isFinite(nextValue)) {
+      const clampedValue = clampValue(nextValue, min, max)
+      onChange(clampedValue)
+    }
+
+    setDraftValue(null)
+  }
 
   return (
     <label className="slider-row">
@@ -721,15 +742,22 @@ const SliderField = ({
           className="value-input"
           max={max}
           min={min}
-          onChange={(event) => {
-            const nextValue = Number(event.target.value)
-            if (Number.isNaN(nextValue)) {
-              return
+          onBlur={commitDraftValue}
+          onChange={(event) => setDraftValue(event.target.value)}
+          onDoubleClick={resetValue}
+          onFocus={() => {
+            setDraftValue(formatSliderValue(value, decimals))
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.currentTarget.blur()
             }
 
-            onChange(clampValue(nextValue, min, max))
+            if (event.key === 'Escape') {
+              setDraftValue(null)
+              event.currentTarget.blur()
+            }
           }}
-          onDoubleClick={() => onChange(defaultValue)}
           step={step}
           type="number"
           value={displayValue}
@@ -740,7 +768,7 @@ const SliderField = ({
         max={max}
         min={min}
         onChange={(event) => onChange(Number(event.target.value))}
-        onDoubleClick={() => onChange(defaultValue)}
+        onDoubleClick={resetValue}
         step={step}
         type="range"
         value={value}
@@ -777,6 +805,7 @@ function App() {
   const viewerHostRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const backgroundImageInputRef = useRef<HTMLInputElement | null>(null)
+  const backgroundImageUrlsRef = useRef<Set<string>>(new Set())
   const viewportRef = useRef<ModelViewport | null>(null)
   const imageInputRefs = useRef<Record<SurfaceMapSlot, HTMLInputElement | null>>({
     diffuse: null,
@@ -805,6 +834,8 @@ function App() {
     DEFAULT_BACKGROUND_IMAGE_SETTINGS,
   )
   const [backgroundImageEditEnabled, setBackgroundImageEditEnabled] = useState(false)
+  const [backgroundImageScaleLocked, setBackgroundImageScaleLocked] =
+    useState(true)
   const [backgroundImageDrag, setBackgroundImageDrag] = useState<{
     pointerId: number
     pointerX: number
@@ -1089,11 +1120,12 @@ function App() {
 
   useEffect(
     () => () => {
-      if (backgroundImage.sourceUrl) {
-        URL.revokeObjectURL(backgroundImage.sourceUrl)
-      }
+      backgroundImageUrlsRef.current.forEach((sourceUrl) => {
+        URL.revokeObjectURL(sourceUrl)
+      })
+      backgroundImageUrlsRef.current.clear()
     },
-    [backgroundImage.sourceUrl],
+    [],
   )
 
   useEffect(() => {
@@ -1845,6 +1877,18 @@ function App() {
         y: lerp(gradientLineStart.y, gradientLineEnd.y, selectedGradientStop.position),
       }
     : null
+  const resolvedBackgroundImageLayerIndex = backgroundImage.layers.findIndex(
+    (layer) => layer.id === backgroundImage.selectedLayerId,
+  )
+  const selectedBackgroundImageLayerIndex =
+    resolvedBackgroundImageLayerIndex >= 0
+      ? resolvedBackgroundImageLayerIndex
+      : backgroundImage.layers.length - 1
+  const selectedBackgroundImageLayer =
+    selectedBackgroundImageLayerIndex >= 0
+      ? backgroundImage.layers[selectedBackgroundImageLayerIndex]
+      : (backgroundImage.layers[backgroundImage.layers.length - 1] ?? null)
+  const hasBackgroundImageLayers = backgroundImage.layers.length > 0
 
   const openDesktopDialog = async () => {
     const picker = window.desktopBridge?.openModelDialog
@@ -1877,20 +1921,31 @@ function App() {
 
     const sourceUrl = URL.createObjectURL(file)
     const image = new Image()
+    const layerId = createBackgroundImageLayerId()
 
     image.onload = () => {
-      setBackgroundImage((current) => ({
-        ...current,
-        enabled: true,
+      backgroundImageUrlsRef.current.add(sourceUrl)
+      const nextLayer: BackgroundImageLayer = {
+        id: layerId,
         image,
+        mode: 'cover',
         name: file.name,
         offsetU: 0,
         offsetV: 0,
-        sourceKey: `${file.name}:${file.size}:${file.lastModified}`,
+        scaleU: 1,
+        scaleV: 1,
+        sourceKey: `${file.name}:${file.size}:${file.lastModified}:${layerId}`,
         sourceUrl,
+      }
+
+      setBackgroundImage((current) => ({
+        enabled: true,
+        layers: [...current.layers, nextLayer],
+        selectedLayerId: layerId,
       }))
       setGradientPanelOpen(false)
       setBackgroundImageEditEnabled(true)
+      setBackgroundImageScaleLocked(true)
       updateStatus(`background / ${file.name}`)
     }
 
@@ -1914,16 +1969,92 @@ function App() {
   }
 
   const clearBackgroundImage = () => {
-    setBackgroundImage(DEFAULT_BACKGROUND_IMAGE_SETTINGS)
-    setBackgroundImageEditEnabled(false)
+    setBackgroundImage((current) => {
+      const selectedId =
+        current.selectedLayerId ?? current.layers[current.layers.length - 1]?.id ?? null
+      const targetLayer = current.layers.find((layer) => layer.id === selectedId)
+      if (targetLayer?.sourceUrl) {
+        URL.revokeObjectURL(targetLayer.sourceUrl)
+        backgroundImageUrlsRef.current.delete(targetLayer.sourceUrl)
+      }
+
+      const nextLayers = current.layers.filter((layer) => layer.id !== selectedId)
+      const nextSelectedLayer =
+        nextLayers[Math.min(nextLayers.length - 1, selectedBackgroundImageLayerIndex)] ??
+        nextLayers[nextLayers.length - 1] ??
+        null
+
+      return {
+        enabled: nextLayers.length > 0,
+        layers: nextLayers,
+        selectedLayerId: nextSelectedLayer?.id ?? null,
+      }
+    })
+    if (backgroundImage.layers.length <= 1) {
+      setBackgroundImageEditEnabled(false)
+    }
     setBackgroundImageDrag(null)
-    updateStatus('background image / clear')
+    updateStatus('background layer / clear')
+  }
+
+  const setBackgroundImageScaleLock = (locked: boolean) => {
+    setBackgroundImageScaleLocked(locked)
+    if (locked) {
+      setBackgroundImage((current) => ({
+        ...current,
+        layers: current.layers.map((layer) =>
+          layer.id === (current.selectedLayerId ?? selectedBackgroundImageLayer?.id)
+            ? {
+                ...layer,
+                scaleV: layer.scaleU,
+              }
+            : layer,
+        ),
+      }))
+    }
+  }
+
+  const selectBackgroundImageLayer = (id: string) => {
+    setBackgroundImage((current) => ({
+      ...current,
+      selectedLayerId: id,
+    }))
+  }
+
+  const moveSelectedBackgroundImageLayer = (direction: -1 | 1) => {
+    setBackgroundImage((current) => {
+      const selectedId =
+        current.selectedLayerId ?? current.layers[current.layers.length - 1]?.id ?? null
+      const currentIndex = current.layers.findIndex((layer) => layer.id === selectedId)
+      const nextIndex = clamp(currentIndex + direction, 0, current.layers.length - 1)
+
+      if (currentIndex < 0 || currentIndex === nextIndex) {
+        return current
+      }
+
+      const nextLayers = [...current.layers]
+      const [layer] = nextLayers.splice(currentIndex, 1)
+      nextLayers.splice(nextIndex, 0, layer)
+
+      return {
+        ...current,
+        layers: nextLayers,
+        selectedLayerId: selectedId,
+      }
+    })
   }
 
   const setBackgroundImageMode = (mode: ViewBackgroundImageMode) => {
     setBackgroundImage((current) => ({
       ...current,
-      mode,
+      layers: current.layers.map((layer) =>
+        layer.id === (current.selectedLayerId ?? selectedBackgroundImageLayer?.id)
+          ? {
+              ...layer,
+              mode,
+            }
+          : layer,
+      ),
     }))
   }
 
@@ -1933,12 +2064,32 @@ function App() {
   ) => {
     setBackgroundImage((current) => ({
       ...current,
-      [key]: value,
+      layers: current.layers.map((layer) => {
+        if (layer.id !== (current.selectedLayerId ?? selectedBackgroundImageLayer?.id)) {
+          return layer
+        }
+
+        return {
+          ...layer,
+          ...(backgroundImageScaleLocked && (key === 'scaleU' || key === 'scaleV')
+            ? {
+                scaleU: value,
+                scaleV: value,
+              }
+            : {
+                [key]: value,
+              }),
+        }
+      }),
     }))
   }
 
   const beginBackgroundImageDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!backgroundImage.enabled || !backgroundImageEditEnabled) {
+    if (
+      !hasBackgroundImageLayers ||
+      !backgroundImageEditEnabled ||
+      !selectedBackgroundImageLayer
+    ) {
       return
     }
 
@@ -1948,8 +2099,8 @@ function App() {
       pointerId: event.pointerId,
       pointerX: event.clientX,
       pointerY: event.clientY,
-      startOffsetU: backgroundImage.offsetU,
-      startOffsetV: backgroundImage.offsetV,
+      startOffsetU: selectedBackgroundImageLayer.offsetU,
+      startOffsetV: selectedBackgroundImageLayer.offsetV,
     })
   }
 
@@ -1966,8 +2117,15 @@ function App() {
 
     setBackgroundImage((current) => ({
       ...current,
-      offsetU: clamp(backgroundImageDrag.startOffsetU + deltaX, -2, 2),
-      offsetV: clamp(backgroundImageDrag.startOffsetV + deltaY, -2, 2),
+      layers: current.layers.map((layer) =>
+        layer.id === (current.selectedLayerId ?? selectedBackgroundImageLayer?.id)
+          ? {
+              ...layer,
+              offsetU: clamp(backgroundImageDrag.startOffsetU + deltaX, -2, 2),
+              offsetV: clamp(backgroundImageDrag.startOffsetV + deltaY, -2, 2),
+            }
+          : layer,
+      ),
     }))
   }
 
@@ -3259,7 +3417,7 @@ function App() {
             ref={viewerHostRef}
           >
             {backgroundGridEnabled ? <div className="viewer-grid-overlay" /> : null}
-            {backgroundImage.enabled && backgroundImageEditEnabled ? (
+            {hasBackgroundImageLayers && backgroundImageEditEnabled ? (
               <div
                 className={`background-image-drag-layer ${
                   backgroundImageDrag ? 'background-image-drag-layer-active' : ''
@@ -3843,18 +4001,66 @@ function App() {
           </div>
             <div className="viewer-export-group">
               <div className="viewer-gradient-stack">
-                {backgroundImage.enabled && backgroundImageEditEnabled ? (
+                {hasBackgroundImageLayers && backgroundImageEditEnabled ? (
                   <section className="background-image-panel">
                     <div className="background-image-name">
-                      {backgroundImage.name || 'background.png'}
+                      {selectedBackgroundImageLayer?.name || 'background.png'}
+                    </div>
+                    <div className="background-image-layer-list">
+                      {backgroundImage.layers.map((layer, index) => (
+                        <button
+                          key={layer.id}
+                          className={`chip background-image-layer-chip ${
+                            layer.id === selectedBackgroundImageLayer?.id
+                              ? 'chip-active'
+                              : ''
+                          }`}
+                          onClick={() => selectBackgroundImageLayer(layer.id)}
+                          type="button"
+                        >
+                          {index + 1}. {layer.name}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="background-image-order-row">
+                      <button
+                        className="chip background-image-order-chip"
+                        disabled={selectedBackgroundImageLayerIndex <= 0}
+                        onClick={() => moveSelectedBackgroundImageLayer(-1)}
+                        type="button"
+                      >
+                        back
+                      </button>
+                      <button
+                        className="chip background-image-order-chip"
+                        disabled={
+                          selectedBackgroundImageLayerIndex < 0 ||
+                          selectedBackgroundImageLayerIndex >=
+                            backgroundImage.layers.length - 1
+                        }
+                        onClick={() => moveSelectedBackgroundImageLayer(1)}
+                        type="button"
+                      >
+                        front
+                      </button>
+                      <button
+                        className="chip background-image-order-chip"
+                        onClick={() => backgroundImageInputRef.current?.click()}
+                        type="button"
+                      >
+                        add photo
+                      </button>
                     </div>
                     <div className="background-image-modes">
                       {(['cover', 'tile'] as const).map((mode) => (
                         <button
                           key={mode}
                           className={`chip background-image-mode ${
-                            backgroundImage.mode === mode ? 'chip-active' : ''
+                            selectedBackgroundImageLayer?.mode === mode
+                              ? 'chip-active'
+                              : ''
                           }`}
+                          disabled={!selectedBackgroundImageLayer}
                           onClick={() => setBackgroundImageMode(mode)}
                           type="button"
                         >
@@ -3862,6 +4068,16 @@ function App() {
                         </button>
                       ))}
                     </div>
+                    <label className="background-image-lock-row">
+                      <span>lock u/v</span>
+                      <input
+                        checked={backgroundImageScaleLocked}
+                        onChange={(event) =>
+                          setBackgroundImageScaleLock(event.target.checked)
+                        }
+                        type="checkbox"
+                      />
+                    </label>
                     <div className="background-image-sliders">
                       {BACKGROUND_IMAGE_SLIDERS.map((item) => (
                         <SliderField
@@ -3875,7 +4091,10 @@ function App() {
                             setBackgroundImageValue(item.key, value)
                           }
                           step={item.step}
-                          value={backgroundImage[item.key]}
+                          value={
+                            selectedBackgroundImageLayer?.[item.key] ??
+                            item.defaultValue
+                          }
                         />
                       ))}
                     </div>
@@ -3961,20 +4180,20 @@ function App() {
                 <div className="viewer-gradient-controls">
                   <button
                     className={`chip viewer-export-chip ${
-                      backgroundImage.enabled ? 'chip-active' : ''
+                      hasBackgroundImageLayers ? 'chip-active' : ''
                     }`}
                     onClick={() => backgroundImageInputRef.current?.click()}
                     type="button"
                   >
-                    bg img
+                    add photo
                   </button>
                   <button
                     className={`chip viewer-export-chip ${
-                      backgroundImage.enabled && backgroundImageEditEnabled
+                      hasBackgroundImageLayers && backgroundImageEditEnabled
                         ? 'chip-active'
                         : ''
                     }`}
-                    disabled={!backgroundImage.enabled}
+                    disabled={!hasBackgroundImageLayers}
                     onClick={() => {
                       setGradientPanelOpen(false)
                       setBackgroundImageEditEnabled((current) => !current)
