@@ -21,6 +21,7 @@ Export reliability and release metadata refresh.
 - Rebuilt web and Windows app icons from the official raster `ngonlogos.png` logo.
 - Isolated background image blur to the selected layer and balanced multi-image tile layout.
 - Clarified the floating background panel add button as `+bg img`.
+- Let 3D viewport controls work again when the background image panel is minimized.
 
 ### Notes
 

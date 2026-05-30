@@ -1687,6 +1687,10 @@ function App() {
   }
 
   const togglePanelCollapse = (panel: FloatingPanelKey) => {
+    if (panel === 'background' && !collapsedPanels.background) {
+      setBackgroundImageDrag(null)
+    }
+
     setCollapsedPanels((current) => ({
       ...current,
       [panel]: !current[panel],
@@ -1901,6 +1905,10 @@ function App() {
       ? backgroundImage.layers[selectedBackgroundImageLayerIndex]
       : (backgroundImage.layers[backgroundImage.layers.length - 1] ?? null)
   const hasBackgroundImageLayers = backgroundImage.layers.length > 0
+  const backgroundImageMoveActive =
+    hasBackgroundImageLayers &&
+    backgroundImageEditEnabled &&
+    !collapsedPanels.background
 
   const openDesktopDialog = async () => {
     const picker = window.desktopBridge?.openModelDialog
@@ -2146,7 +2154,7 @@ function App() {
   const beginBackgroundImageDrag = (event: React.PointerEvent<HTMLDivElement>) => {
     if (
       !hasBackgroundImageLayers ||
-      !backgroundImageEditEnabled ||
+      !backgroundImageMoveActive ||
       !selectedBackgroundImageLayer
     ) {
       return
@@ -3476,7 +3484,7 @@ function App() {
             ref={viewerHostRef}
           >
             {backgroundGridEnabled ? <div className="viewer-grid-overlay" /> : null}
-            {hasBackgroundImageLayers && backgroundImageEditEnabled ? (
+            {backgroundImageMoveActive ? (
               <div
                 className={`background-image-drag-layer ${
                   backgroundImageDrag ? 'background-image-drag-layer-active' : ''
@@ -4278,20 +4286,21 @@ function App() {
                   </button>
                   <button
                     className={`chip viewer-export-chip ${
-                      hasBackgroundImageLayers && backgroundImageEditEnabled
-                        ? 'chip-active'
-                        : ''
+                      backgroundImageMoveActive ? 'chip-active' : ''
                     }`}
                     disabled={!hasBackgroundImageLayers}
                     onClick={() => {
                       setGradientPanelOpen(false)
-                      const nextOpen = !backgroundImageEditEnabled
+                      const nextOpen =
+                        !backgroundImageEditEnabled || collapsedPanels.background
                       setBackgroundImageEditEnabled(nextOpen)
                       if (nextOpen) {
                         setCollapsedPanels((current) => ({
                           ...current,
                           background: false,
                         }))
+                      } else {
+                        setBackgroundImageDrag(null)
                       }
                     }}
                     type="button"
